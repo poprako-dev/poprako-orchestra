@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "diesel-basic"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+poprako-s-atomicity = { path = "../.." }
+diesel = { version = "2", features = ["postgres"] }
+diesel-async = { version = "0.9", features = ["deadpool", "postgres"] }
+futures = "0.3.32"
+tokio = { version = "1", features = ["full"] }

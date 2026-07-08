@@ -7,8 +7,8 @@
 //! # Relation to [`Oper`](crate::oper::Oper)
 //!
 //! [`Step`] is parameterised by an [`Oper`](crate::oper::Oper) type and a
-//! context type [`C`](Step).  This keeps the execution logic separate from
-//! the input data:
+//! context type `C`.  This keeps the execution logic separate from the
+//! input data:
 //!
 //! - The [`Step`] implementor holds no per-call state (it is typically a
 //!   ZST or a thin adapter with injected dependencies).
@@ -22,7 +22,7 @@
 //! [`Nucl::coord`](crate::nucl::Nucl::coord)) and passed by mutable
 //! reference to [`step`](Step::step).
 
-use async_trait::async_trait;
+use std::future::Future;
 
 use crate::oper::Oper;
 
@@ -30,31 +30,9 @@ use crate::oper::Oper;
 ///
 /// # Type parameters
 ///
-/// * `O` — the [`Oper`] type this step can execute.  The step extracts
-///   input arguments from the oper and writes its result as
-///   [`O::Output`](Oper::Output).
+/// * `O` — the [`Oper`] type this step can execute.
 /// * `C` — the context type this step requires (e.g. a database connection,
 ///   a repository handle, or a domain aggregate).
-///
-/// # Example
-///
-/// ```ignore
-/// use async_trait::async_trait;
-/// use poprako_s_atomicity::{oper::Oper, step::Step};
-///
-/// pub struct CreateUserStep;
-///
-/// #[async_trait]
-/// impl Step<CreateUser, DbConn> for CreateUserStep {
-///     type Error = anyhow::Error;
-///
-///     async fn step(&mut self, cx: &mut DbConn, oper: &CreateUser) -> Result<UserId, Self::Error> {
-///         // ... insert user into database ...
-///         Ok(user_id)
-///     }
-/// }
-/// ```
-#[async_trait]
 pub trait Step<O, C>
 where
     O: Oper,
@@ -64,8 +42,7 @@ where
 
     /// Execute the operation against the given context and return its output.
     ///
-    /// * `cx` — the mutable context supplied by the caller (often obtained
-    ///   from [`Nucl::coord`](crate::nucl::Nucl::coord)).
+    /// * `cx` — the mutable context supplied by the caller.
     /// * `oper` — the operation containing the input arguments.
-    async fn step(&mut self, cx: &mut C, oper: &O) -> Result<O::Output, Self::Error>;
+    fn step(&self, cx: &mut C, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }

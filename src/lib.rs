@@ -23,8 +23,6 @@
 //! the transactional engine (e.g. a database connection pool, a saga
 //! coordinator) that provides the context and handles commit / rollback.
 
-mod util;
-
 pub mod nucl;
 pub mod oper;
 pub mod step;
