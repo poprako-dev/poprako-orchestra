@@ -1,9 +1,9 @@
-//! # SQLx-Basic — poprako-s-atomicity with sqlx
+//! # SQLx-Basic — poprako-orchestra with sqlx
 
-use poprako_s_atomicity::nucl::NuclError;
-use poprako_s_atomicity::nucl::Nucl;
-use poprako_s_atomicity::oper::Oper;
-use poprako_s_atomicity::step::Step;
+use poprako_orchestra::nucl::Nucl;
+use poprako_orchestra::nucl::NuclError;
+use poprako_orchestra::oper::Oper;
+use poprako_orchestra::step::Step;
 use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -12,45 +12,23 @@ use sqlx::Transaction;
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
 
-pub struct DecreaseProduct<'a> {
+pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
-    pub _marker: &'a (),
 }
 
-impl Oper for DecreaseProduct<'_> {
+impl Oper for DecreaseProduct {
     type Output = ();
 }
 
-pub struct CreateOrder<'a> {
+pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
     pub quantity: i32,
-    pub _marker: &'a (),
 }
 
-impl Oper for CreateOrder<'_> {
+impl Oper for CreateOrder {
     type Output = ();
-}
-
-// ---------------------------------------------------------------------------
-// Domain — Oper factories
-// ---------------------------------------------------------------------------
-
-pub struct ProductOper;
-
-impl ProductOper {
-    pub fn decrease(quantity: i32, product_id: i32) -> DecreaseProduct<'static> {
-        DecreaseProduct { product_id, quantity, _marker: &() }
-    }
-}
-
-pub struct OrderOper;
-
-impl OrderOper {
-    pub fn create(user_id: i32, product_id: i32, quantity: i32) -> CreateOrder<'static> {
-        CreateOrder { user_id, product_id, quantity, _marker: &() }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,9 +84,7 @@ impl Nucl for PgNucl {
 
         let mut cx = PgContext(tx);
 
-        let ret = f(&mut cx).await;
-
-        match ret {
+        match f(&mut cx).await {
             Ok(value) => {
                 cx.0.commit().await.map_err(NuclError::Backend)?;
                 Ok(value)
@@ -127,35 +103,31 @@ impl Nucl for PgNucl {
 
 pub struct PgRepo;
 
-impl PgRepo {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl<'a> Step<DecreaseProduct<'a>, PgContext> for PgRepo {
+impl Step<DecreaseProduct, PgContext> for PgRepo {
     type Error = RegularError;
 
-    async fn step(&self, cx: &mut PgContext, oper: &DecreaseProduct<'a>) -> Result<(), RegularError> {
+    async fn step(&self, cx: &mut PgContext, oper: &DecreaseProduct) -> Result<(), RegularError> {
         sqlx::query("UPDATE products SET stock = stock - $1 WHERE id = $2")
             .bind(oper.quantity)
             .bind(oper.product_id)
             .execute(&mut *cx.0)
             .await?;
+
         Ok(())
     }
 }
 
-impl<'a> Step<CreateOrder<'a>, PgContext> for PgRepo {
+impl Step<CreateOrder, PgContext> for PgRepo {
     type Error = RegularError;
 
-    async fn step(&self, cx: &mut PgContext, oper: &CreateOrder<'a>) -> Result<(), RegularError> {
+    async fn step(&self, cx: &mut PgContext, oper: &CreateOrder) -> Result<(), RegularError> {
         sqlx::query("INSERT INTO orders (user_id, product_id, quantity) VALUES ($1, $2, $3)")
             .bind(oper.user_id)
             .bind(oper.product_id)
             .bind(oper.quantity)
             .execute(&mut *cx.0)
             .await?;
+
         Ok(())
     }
 }
@@ -164,7 +136,7 @@ impl<'a> Step<CreateOrder<'a>, PgContext> for PgRepo {
 // Usecase
 // ---------------------------------------------------------------------------
 
-async fn run_order_usecase<N, R>(
+async fn run_order_usecase<C, N, R>(
     nucl: &N,
     repo: &R,
     product_id: i32,
@@ -172,18 +144,38 @@ async fn run_order_usecase<N, R>(
     quantity: i32,
 ) -> Result<(), RegularError>
 where
-    N: Nucl<Context = PgContext>,
+    C: Send,
+    N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: Step<DecreaseProduct<'static>, PgContext, Error = RegularError>
-        + Step<CreateOrder<'static>, PgContext, Error = RegularError>
+    R: Step<DecreaseProduct, C, Error = RegularError>
+        + Step<CreateOrder, C, Error = RegularError>
         + Send
         + Sync,
 {
-    match nucl.coord(async |cx| {
-        repo.step(cx, &ProductOper::decrease(quantity, product_id)).await?;
-        repo.step(cx, &OrderOper::create(user_id, product_id, quantity)).await?;
-        Ok(())
-    }).await
+    match nucl
+        .coord(async |cx| {
+            repo.step(
+                cx,
+                &DecreaseProduct {
+                    product_id,
+                    quantity,
+                },
+            )
+            .await?;
+
+            repo.step(
+                cx,
+                &CreateOrder {
+                    user_id,
+                    product_id,
+                    quantity,
+                },
+            )
+            .await?;
+
+            Ok(())
+        })
+        .await
     {
         Ok(()) => Ok(()),
         Err(NuclError::Backend(e)) => Err(RegularError(Box::new(e))),
@@ -197,12 +189,12 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost:5432/test".into());
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost:5432/test".into());
     let pool = PgPool::connect(&database_url).await?;
 
     let nucl = PgNucl::new(pool);
-    let repo = PgRepo::new();
+    let repo = PgRepo;
 
     let result = run_order_usecase(&nucl, &repo, 1, 1, 1).await;
 
