@@ -22,12 +22,14 @@ use std::ops::AsyncFnOnce;
 
 /// Discriminates between backend-infrastructure failures and step-level
 /// business failures.
-pub enum NuclError<BE, SE> {
+pub enum Error<BE, SE> {
     /// An error from the transactional backend (connection lost, deadlock, etc.).
     Backend(BE),
     /// An error from the step / business logic executed inside the transaction.
     Step(SE),
 }
+
+pub type NuclError<BE, SE> = Error<BE, SE>;
 
 /// A transactional nucleus that provides a managed [`Context`](Nucl::Context) and coordinates
 /// the execution of application logic inside it.
@@ -40,9 +42,9 @@ pub trait Nucl {
 
     /// Run an async computation inside the nucleus's managed context.
     ///
-    /// Returns [`NuclError::Backend`] if the infrastructure fails,
-    /// [`NuclError::Step`] if the closure returns an error.
-    fn coord<F, T, E>(&self, f: F) -> impl Future<Output = Result<T, NuclError<Self::Error, E>>>
+    /// Returns [`Error::Backend`] if the infrastructure fails,
+    /// [`Error::Step`] if the closure returns an error.
+    fn coord<F, T, E>(&self, f: F) -> impl Future<Output = Result<T, Error<Self::Error, E>>>
     where
         F: for<'cx> AsyncFnOnce(&'cx mut Self::Context) -> Result<T, E> + Send,
         T: Send,
