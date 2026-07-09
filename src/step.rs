@@ -44,5 +44,19 @@ where
     ///
     /// * `cx` — the mutable context supplied by the caller.
     /// * `oper` — the operation containing the input arguments.
-    fn step(&self, cx: &mut C, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
+    fn step(
+        &self,
+        cx: &mut C,
+        oper: &O,
+    ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
+}
+
+// TODO: comment. Just a non-transactional util trait.
+pub trait Run<O, C>
+where
+    O: Oper,
+{
+    type Error;
+
+    fn run(&self, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }
