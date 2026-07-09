@@ -1,4 +1,4 @@
-//! # poprako-s-atomicity — Transaction Abstraction Framework
+//! # poprako-orchestra — Transaction Abstraction Framework
 //!
 //! Provides a layered set of traits for composing and executing transactional
 //! operations against an abstract backend (a "nucleus"). The crate decouples

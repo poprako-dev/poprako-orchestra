@@ -28,7 +28,7 @@
 /// # Example
 ///
 /// ```
-/// use poprako_s_atomicity::oper::Oper;
+/// use poprako_orchestra::oper::Oper;
 ///
 /// pub struct CreateUser {
 ///     pub name: String,
