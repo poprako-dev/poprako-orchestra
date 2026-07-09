@@ -2,5 +2,12 @@
 name = "poprako-orchestra"
 version = "0.1.0"
 edition = "2024"
+description = "A unified transaction abstraction framework for Rust — decoupled Oper, Step, Nucl, and Run traits"
+license = "MIT"
+repository = "https://github.com/poprako-dev/poprako-orchestra"
+documentation = "https://docs.rs/poprako-orchestra"
+readme = "README.md"
+keywords = ["transaction", "abstraction", "async", "trait", "framework"]
+categories = ["asynchronous", "rust-patterns"]
 
 [dependencies]
