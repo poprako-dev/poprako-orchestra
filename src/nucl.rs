@@ -29,7 +29,7 @@ pub enum NuclError<BE, SE> {
     Step(SE),
 }
 
-/// A transactional nucleus that provides a managed [`Context`] and coordinates
+/// A transactional nucleus that provides a managed [`Context`](Nucl::Context) and coordinates
 /// the execution of application logic inside it.
 pub trait Nucl {
     /// Error type produced by the backend itself (begin / commit / rollback).

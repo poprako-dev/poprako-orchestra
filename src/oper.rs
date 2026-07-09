@@ -21,7 +21,7 @@
 /// A single atomic operation within a transaction.
 ///
 /// Implementors are plain data structs that hold the input parameters
-/// required to perform the operation.  The associated [`Output`] type
+/// required to perform the operation.  The associated [`Output`](Oper::Output) type
 /// declares what value is produced when the operation executes
 /// successfully.
 ///
