@@ -1,6 +1,6 @@
 [package]
 name = "poprako-orchestra"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "A unified transaction abstraction framework for Rust — decoupled Oper, Step, Nucl, and Run traits"
 license = "MIT"
