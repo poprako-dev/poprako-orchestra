@@ -8,7 +8,7 @@
 //!   operation's input data and declares its [`Output`](oper::Oper::Output)
 //!   type.
 //! - **How** to do it: described by the [`step::Step`] trait, which receives
-//!   an [`Oper`](oper::Oper) and a mutable context, executes the operation,
+//!   an [`Oper`] and a mutable context, executes the operation,
 //!   and returns the output.
 //! - **Where** to run it: described by the [`nucl::Nucl`] trait, which
 //!   provides a managed context scope where the application can execute
@@ -17,9 +17,9 @@
 //!
 //! ## Layering
 //!
-//! [`Oper`](oper::Oper) and [`Step`](step::Step) together form the
+//! [`Oper`] and [`Step`] together form the
 //! *semantic layer* — they model what your application does inside a
-//! transaction.  [`Nucl`](nucl::Nucl) is the *back-end layer* — it models
+//! transaction.  [`Nucl`] is the *back-end layer* — it models
 //! the transactional engine (e.g. a database connection pool, a saga
 //! coordinator) that provides the context and handles commit / rollback.
 

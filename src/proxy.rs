@@ -1,19 +1,51 @@
 use crate::Oper;
 
+/// Executes an [`Oper`] through a repository-backed proxy.
+///
+/// Proxy implementations normally forward to [`Run`](crate::Run) or
+/// [`Step`](crate::Step), allowing business logic to depend only on the
+/// operations it needs rather than a concrete repository type.
 pub trait Proxy<O>
 where
     O: Oper,
 {
+    /// Error returned when the proxied operation cannot be executed.
     type Error;
 
+    /// Executes `oper` through the proxy's underlying repository.
     fn exec(&mut self, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }
 
+/// Builds a proxy that dispatches operations through [`Run`](crate::Run).
+///
+/// Each row associates a repository identifier with the operation types it
+/// executes. An operation with borrowed data may declare one or more
+/// lifetimes with `for<'a, 'b>`, for example:
+///
+/// ```
+/// # use poprako_orchestra::{Oper, Run, run_proxy};
+/// # struct Repo;
+/// # struct BorrowedOper<'a, 'b>(&'a str, &'b str);
+/// # impl Oper for BorrowedOper<'_, '_> {
+/// #     type Output = ();
+/// # }
+/// # impl Run<BorrowedOper<'_, '_>> for Repo {
+/// #     type Error = ();
+/// #
+/// #     async fn run(&self, _oper: &BorrowedOper<'_, '_>) -> Result<(), Self::Error> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// let repo = &Repo;
+/// let _proxy = run_proxy! {
+///     repo => for<'a, 'b> BorrowedOper<'a, 'b>;
+/// };
+/// ```
 #[macro_export]
 macro_rules! run_proxy {
     (
         $(
-            $repo:ident => $(for<$oper_lt:lifetime> $oper:ty),+ $(,)?;
+            $repo:ident => $(for<$($oper_lt:lifetime),+> $oper:ty),+ $(,)?;
         )+
     ) => {{
         #[allow(non_camel_case_types)]
@@ -29,7 +61,7 @@ macro_rules! run_proxy {
             [$($repo),+];
 
             $(
-                $repo => $(for<$oper_lt> $oper),+;
+                $repo => $(for<$($oper_lt),+> $oper),+;
             )+
         }
 
@@ -76,7 +108,7 @@ macro_rules! run_proxy {
         $proxy:ident,
         $all_repos:tt;
 
-        $repo:ident => $(for<$oper_lt:lifetime> $oper:ty),+;
+        $repo:ident => $(for<$($oper_lt:lifetime),+> $oper:ty),+;
 
         $($rest:tt)*
     ) => {
@@ -87,7 +119,7 @@ macro_rules! run_proxy {
                 $all_repos,
                 $repo;
 
-                for<$oper_lt> $oper
+                for<$($oper_lt),+> $oper
             }
         )+
 
@@ -106,10 +138,10 @@ macro_rules! run_proxy {
         [$($all_repo:ident),+],
         $repo:ident;
 
-        for<$oper_lt:lifetime> $oper:ty
+        for<$($oper_lt:lifetime),+> $oper:ty
     ) => {
         #[allow(non_camel_case_types)]
-        impl<$oper_lt, 'run_proxy_repo, $($all_repo),+> $crate::Proxy<$oper>
+        impl<$($oper_lt,)+ 'run_proxy_repo, $($all_repo),+> $crate::Proxy<$oper>
             for $proxy<'run_proxy_repo, $($all_repo),+>
         where
             $repo: $crate::Run<$oper>,
@@ -196,13 +228,19 @@ macro_rules! run_proxy {
     };
 }
 
+/// Builds a proxy that dispatches operations through [`Step`](crate::Step).
+///
+/// The first argument is the transaction context. Each following row maps a
+/// repository identifier to the operation types it can step. Borrowed
+/// operations may declare any positive number of lifetimes with
+/// `for<'a, 'b, ...>`.
 #[macro_export]
 macro_rules! step_proxy {
     (
         $context:expr;
 
         $(
-            $repo:ident => $(for<$oper_lt:lifetime> $oper:ty),+ $(,)?;
+            $repo:ident => $(for<$($oper_lt:lifetime),+> $oper:ty),+ $(,)?;
         )+
     ) => {{
         #[allow(non_camel_case_types)]
@@ -213,7 +251,7 @@ macro_rules! step_proxy {
             $($repo),+
         > {
             // The proxy owns the only long-lived mutable context reference.
-            // Each `Proxy::exec` implementation reborrows it for one Step call.
+            // Each `Proxy::exec` implementation reborrows it for one step.
             context: &'step_proxy_context mut StepProxyContext,
 
             $(
@@ -228,7 +266,7 @@ macro_rules! step_proxy {
             [$($repo),+];
 
             $(
-                $repo => $(for<$oper_lt> $oper),+;
+                $repo => $(for<$($oper_lt),+> $oper),+;
             )+
         }
 
@@ -242,9 +280,7 @@ macro_rules! step_proxy {
         $context:expr;
 
         $(
-            $repo:ident => $(
-                $(for<$oper_lt:lifetime>)? $oper:ty
-            ),+ $(,)?;
+            $repo:ident => $oper:ty $(, $oper_rest:ty)* $(,)?;
         )+
     ) => {{
         #[allow(non_camel_case_types)]
@@ -255,7 +291,7 @@ macro_rules! step_proxy {
             $($repo),+
         > {
             // The proxy owns the only long-lived mutable context reference.
-            // Each `Proxy::exec` implementation reborrows it for one Step call.
+            // Each `Proxy::exec` implementation reborrows it for one step.
             context: &'step_proxy_context mut StepProxyContext,
 
             $(
@@ -264,15 +300,13 @@ macro_rules! step_proxy {
         }
 
         $crate::step_proxy! {
-            @impl_rows
+            @impl_plain_rows
             StepProxy,
             StepProxyContext,
             [$($repo),+];
 
             $(
-                $repo => $(
-                    $(for<$oper_lt>)? $oper
-                ),+;
+                $repo => $oper $(, $oper_rest)*;
             )+
         }
 
@@ -282,7 +316,7 @@ macro_rules! step_proxy {
         }
     }};
 
-    // 所有 repo 行处理完毕。
+    // Finishes processing all repository rows.
     (
         @impl_rows
         $proxy:ident,
@@ -290,14 +324,14 @@ macro_rules! step_proxy {
         $all_repos:tt;
     ) => {};
 
-    // 取出只包含带生命周期 operation 的 repo 行。
+    // Generates implementations for one lifetime-bearing repository row and continues.
     (
         @impl_rows
         $proxy:ident,
         $context_ty:ident,
         $all_repos:tt;
 
-        $repo:ident => $(for<$oper_lt:lifetime> $oper:ty),+;
+        $repo:ident => $(for<$($oper_lt:lifetime),+> $oper:ty),+;
 
         $($rest:tt)*
     ) => {
@@ -308,7 +342,7 @@ macro_rules! step_proxy {
             $all_repos,
             $repo;
 
-            $(for<$oper_lt> $oper),+
+            $(for<$($oper_lt),+> $oper),+
         }
 
         $crate::step_proxy! {
@@ -321,33 +355,62 @@ macro_rules! step_proxy {
         }
     };
 
-    // 取出一行 repo => operations，然后继续处理剩余行。
+    // Generates one `Proxy` implementation per lifetime-bearing operation.
     (
-        @impl_rows
+        @impl_operations
+        $proxy:ident,
+        $context_ty:ident,
+        $all_repos:tt,
+        $repo:ident;
+
+        $(for<$($oper_lt:lifetime),+> $oper:ty),+
+    ) => {
+        $(
+            $crate::step_proxy! {
+                @impl_one
+                $proxy,
+                $context_ty,
+                $all_repos,
+                $repo;
+
+                for<$($oper_lt),+> $oper
+            }
+        )+
+    };
+
+    // Finishes processing all plain-operation repository rows.
+    (
+        @impl_plain_rows
+        $proxy:ident,
+        $context_ty:ident,
+        $all_repos:tt;
+    ) => {};
+
+    // Generates implementations for one plain-operation repository row and continues.
+    (
+        @impl_plain_rows
         $proxy:ident,
         $context_ty:ident,
         $all_repos:tt;
 
-        $repo:ident => $(
-            $(for<$oper_lt:lifetime>)? $oper:ty
-        ),+;
+        $repo:ident => $($oper:ty),+;
 
         $($rest:tt)*
     ) => {
-        $crate::step_proxy! {
-            @impl_operations
-            $proxy,
-            $context_ty,
-            $all_repos,
-            $repo;
+        $(
+            $crate::step_proxy! {
+                @impl_plain_one
+                $proxy,
+                $context_ty,
+                $all_repos,
+                $repo;
 
-            $(
-                $(for<$oper_lt>)? $oper
-            ),+
-        }
+                $oper
+            }
+        )+
 
         $crate::step_proxy! {
-            @impl_rows
+            @impl_plain_rows
             $proxy,
             $context_ty,
             $all_repos;
@@ -356,55 +419,7 @@ macro_rules! step_proxy {
         }
     };
 
-    // 为只包含带生命周期 operation 的 repo 行生成 Proxy impl。
-    (
-        @impl_operations
-        $proxy:ident,
-        $context_ty:ident,
-        $all_repos:tt,
-        $repo:ident;
-
-        $(for<$oper_lt:lifetime> $oper:ty),+
-    ) => {
-        $(
-            $crate::step_proxy! {
-                @impl_one
-                $proxy,
-                $context_ty,
-                $all_repos,
-                $repo;
-
-                for<$oper_lt> $oper
-            }
-        )+
-    };
-
-    // 为当前 repo 的每个 operation 分别生成一个 Proxy impl。
-    (
-        @impl_operations
-        $proxy:ident,
-        $context_ty:ident,
-        $all_repos:tt,
-        $repo:ident;
-
-        $(
-            $(for<$oper_lt:lifetime>)? $oper:ty
-        ),+
-    ) => {
-        $(
-            $crate::step_proxy! {
-                @impl_one
-                $proxy,
-                $context_ty,
-                $all_repos,
-                $repo;
-
-                $(for<$oper_lt>)? $oper
-            }
-        )+
-    };
-
-    // 带生命周期参数的 Oper。
+    // Generates a `Proxy` implementation for a borrowed operation.
     (
         @impl_one
         $proxy:ident,
@@ -412,11 +427,11 @@ macro_rules! step_proxy {
         [$($all_repo:ident),+],
         $repo:ident;
 
-        for<$oper_lt:lifetime> $oper:ty
+        for<$($oper_lt:lifetime),+> $oper:ty
     ) => {
         #[allow(non_camel_case_types)]
         impl<
-            $oper_lt,
+            $($oper_lt,)+
             'step_proxy_context,
             'step_proxy_repo,
             $context_ty,
@@ -452,9 +467,9 @@ macro_rules! step_proxy {
         }
     };
 
-    // 不带生命周期参数的 Oper。
+    // Generates a `Proxy` implementation for a plain operation.
     (
-        @impl_one
+        @impl_plain_one
         $proxy:ident,
         $context_ty:ident,
         [$($all_repo:ident),+],
@@ -504,7 +519,7 @@ macro_rules! step_proxy {
 mod tests {
     use super::*;
 
-    use crate::Run;
+    use crate::{Run, Step};
 
     struct PlainOper;
 
@@ -515,6 +530,12 @@ mod tests {
     struct BorrowedOper<'a>(&'a str);
 
     impl Oper for BorrowedOper<'_> {
+        type Output = ();
+    }
+
+    struct DoublyBorrowedOper<'first, 'second>(&'first str, &'second str);
+
+    impl Oper for DoublyBorrowedOper<'_, '_> {
         type Output = ();
     }
 
@@ -537,6 +558,32 @@ mod tests {
         }
     }
 
+    impl Run<DoublyBorrowedOper<'_, '_>> for Repo {
+        type Error = ();
+
+        async fn run(&self, oper: &DoublyBorrowedOper<'_, '_>) -> Result<(), Self::Error> {
+            let _ = oper.0;
+            let _ = oper.1;
+
+            Ok(())
+        }
+    }
+
+    impl Step<DoublyBorrowedOper<'_, '_>, ()> for Repo {
+        type Error = ();
+
+        async fn step(
+            &self,
+            _context: &mut (),
+            oper: &DoublyBorrowedOper<'_, '_>,
+        ) -> Result<(), Self::Error> {
+            let _ = oper.0;
+            let _ = oper.1;
+
+            Ok(())
+        }
+    }
+
     #[test]
     fn run_proxy_supports_plain_oper() {
         let repo = &Repo;
@@ -555,5 +602,28 @@ mod tests {
         };
 
         drop(proxy.exec(&BorrowedOper("value")));
+    }
+
+    #[test]
+    fn run_proxy_supports_multiple_borrowed_lifetimes() {
+        let repo = &Repo;
+        let mut proxy = run_proxy! {
+            repo => for<'first, 'second> DoublyBorrowedOper<'first, 'second>;
+        };
+
+        drop(proxy.exec(&DoublyBorrowedOper("first", "second")));
+    }
+
+    #[test]
+    fn step_proxy_supports_multiple_borrowed_lifetimes() {
+        let repo = &Repo;
+        let mut context = ();
+        let context = &mut context;
+        let mut proxy = step_proxy! {
+            context;
+            repo => for<'first, 'second> DoublyBorrowedOper<'first, 'second>;
+        };
+
+        drop(proxy.exec(&DoublyBorrowedOper("first", "second")));
     }
 }

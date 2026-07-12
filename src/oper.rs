@@ -36,7 +36,7 @@
 /// }
 ///
 /// impl Oper for CreateUser {
-///     type Output = UserId;
+///     type Output = ();
 /// }
 /// ```
 pub trait Oper {
