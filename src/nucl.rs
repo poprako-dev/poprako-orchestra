@@ -22,6 +22,7 @@ use std::ops::AsyncFnOnce;
 
 /// Discriminates between backend-infrastructure failures and step-level
 /// business failures.
+#[derive(Debug)]
 pub enum Error<BE, SE> {
     /// An error from the transactional backend (connection lost, deadlock, etc.).
     Backend(BE),
@@ -30,6 +31,36 @@ pub enum Error<BE, SE> {
 }
 
 pub type NuclError<BE, SE> = Error<BE, SE>;
+
+impl<BE, SE> std::fmt::Display for Error<BE, SE>
+where
+    BE: std::fmt::Display,
+    SE: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Backend(error) => {
+                write!(f, "transaction backend error: {error}")
+            }
+            Self::Step(error) => {
+                write!(f, "transaction step error: {error}")
+            }
+        }
+    }
+}
+
+impl<BE, SE> std::error::Error for Error<BE, SE>
+where
+    BE: std::error::Error + 'static,
+    SE: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Backend(error) => Some(error),
+            Self::Step(error) => Some(error),
+        }
+    }
+}
 
 /// A transactional nucleus that provides a managed [`Context`](Nucl::Context) and coordinates
 /// the execution of application logic inside it.
