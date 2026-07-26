@@ -9,14 +9,11 @@
 //! 3. [`Run`] — insert an outbox event so a downstream consumer can clean up
 //!    the OSS resource (after the transaction commits).
 
-use poprako_orchestra::nucl::Nucl;
-use poprako_orchestra::nucl::NuclError;
-use poprako_orchestra::oper::Oper;
-use poprako_orchestra::step::Run;
-use poprako_orchestra::step::Step;
-use sqlx::PgPool;
-use sqlx::Postgres;
-use sqlx::Transaction;
+use sqlx::{PgPool, Postgres, Transaction};
+
+use poprako_orchestra::{Oper, OperRun, OperStep, drive};
+use poprako_orchestra::nucl::{Nucl, NuclError};
+use poprako_orchestra::step::{Run, Step};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -25,37 +22,32 @@ use sqlx::Transaction;
 /// Check whether the user exists and return the current avatar OSS key (if
 /// any).  Executed **outside** the transaction so a non-existent user is
 /// caught before any writes begin.
+///
+/// `None`            — user not found (caller should short-circuit).
+/// `Some(Some(key))` — user exists **and** has an avatar to clean up.
+/// `Some(None)`      — user exists but has no avatar (skip OSS cleanup).
+#[derive(Oper)]
+#[oper(output = Option<String>)]
 pub struct ExistAvatar<'a> {
     pub id: &'a str,
 }
 
-impl Oper for ExistAvatar<'_> {
-    /// `None`  — user not found (caller should short-circuit).
-    /// `Some(Some(key))` — user exists **and** has an avatar to clean up.
-    /// `Some(None)`      — user exists but has no avatar (skip OSS cleanup).
-    type Output = Option<String>;
-}
-
 /// Clear the `avatar_url` column to `NULL`.  Executed **inside** the
 /// transaction so any subsequent rollback restores the URL.
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct DeleteAvatar<'a> {
     pub id: &'a str,
-}
-
-impl Oper for DeleteAvatar<'_> {
-    type Output = ();
 }
 
 /// Insert an outbox event so a downstream consumer can perform the actual
 /// OSS resource cleanup.  Executed **inside** the same transaction as the
 /// avatar deletion so the two stay atomic.
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct CleanOssImage<'a> {
     pub id: &'a str,
     pub key: &'a str,
-}
-
-impl Oper for CleanOssImage<'_> {
-    type Output = ();
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +74,25 @@ impl std::error::Error for RegularError {
         self.0.source()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Domain — Repo traits
+// ---------------------------------------------------------------------------
+
+#[drive(
+    context = C,
+    error = RegularError,
+    run(for<'a> ExistAvatar<'a>),
+    step(for<'a> DeleteAvatar<'a>),
+)]
+pub trait UserRepo<C> {}
+
+#[drive(
+    context = C,
+    error = RegularError,
+    step(for<'a> CleanOssImage<'a>),
+)]
+pub trait OutboxRepo<C> {}
 
 // ---------------------------------------------------------------------------
 // Infra — Context + Nucl
@@ -128,11 +139,11 @@ impl Nucl for PgNucl {
 // Infra — Repos
 // ---------------------------------------------------------------------------
 
-pub struct UserRepo {
+pub struct UserRepoImpl {
     pool: PgPool,
 }
 
-impl Run<ExistAvatar<'_>> for UserRepo {
+impl Run<ExistAvatar<'_>> for UserRepoImpl {
     type Error = RegularError;
 
     async fn run(&self, oper: &ExistAvatar<'_>) -> Result<Option<String>, RegularError> {
@@ -152,7 +163,7 @@ impl Run<ExistAvatar<'_>> for UserRepo {
     }
 }
 
-impl Step<DeleteAvatar<'_>, PgContext> for UserRepo {
+impl Step<DeleteAvatar<'_>, PgContext> for UserRepoImpl {
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &DeleteAvatar<'_>) -> Result<(), RegularError> {
@@ -165,9 +176,9 @@ impl Step<DeleteAvatar<'_>, PgContext> for UserRepo {
     }
 }
 
-pub struct OutboxRepo;
+pub struct OutboxRepoImpl;
 
-impl Step<CleanOssImage<'_>, PgContext> for OutboxRepo {
+impl Step<CleanOssImage<'_>, PgContext> for OutboxRepoImpl {
     type Error = RegularError;
 
     async fn step(
@@ -203,20 +214,17 @@ where
     C: Send,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R1: Send + Sync,
-    R2: Send + Sync,
-    for<'a> R1: Run<ExistAvatar<'a>, Error = RegularError>,
-    for<'a> R1: Step<DeleteAvatar<'a>, C, Error = RegularError>,
-    for<'a> R2: Step<CleanOssImage<'a>, C, Error = RegularError>,
+    R1: UserRepo<C> + Send + Sync,
+    R2: OutboxRepo<C> + Send + Sync,
 {
     // ── Step 1: check existence + get avatar key (outside tx) ──
-    let _ = user_repo.run(&ExistAvatar { id }).await?;
+    let _ = ExistAvatar { id }.run_on(user_repo).await?;
 
     // ── Step 2: clear avatar_url + insert outbox entry (inside tx) ──
     match nucl
         .coord(async |cx| {
-            user_repo.step(cx, &DeleteAvatar { id }).await?;
-            outbox_repo.step(cx, &CleanOssImage { id, key }).await?;
+            DeleteAvatar { id }.step_on(user_repo, cx).await?;
+            CleanOssImage { id, key }.step_on(outbox_repo, cx).await?;
             Ok(())
         })
         .await
@@ -238,8 +246,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPool::connect(&database_url).await?;
 
     let nucl = PgNucl::new(pool.clone());
-    let user_repo = UserRepo { pool: pool.clone() };
-    let outbox_repo = OutboxRepo;
+    let user_repo = UserRepoImpl { pool: pool.clone() };
+    let outbox_repo = OutboxRepoImpl;
 
     let result =
         delete_avatar_usecase(&nucl, &user_repo, &outbox_repo, "user_1", "avatars/foo.jpg").await;

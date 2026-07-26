@@ -3,33 +3,15 @@
 //!
 //! # [`Step`] — inside a transaction
 //!
-//! A [`Step`] is an *async executor* that processes a given
-//! [`Oper`] against a mutable context.  It encapsulates
-//! the logic of running one atomic unit of work inside a transaction.
+//! A [`Step`] is an *async executor* that processes a given [`Oper`] against a
+//! mutable context. It encapsulates the logic of running one atomic unit of
+//! work inside a transaction.
 //!
 //! # [`Run`] — without a transaction
 //!
-//! A [`Run`] is an *async executor* that processes an
-//! [`Oper`] directly, without any context.  Use it for
-//! side effects that should execute outside the transactional boundary
-//! (external API calls, publishing events, OSS operations).
-//!
-//! # Relation to [`Oper`]
-//!
-//! Both traits are parameterised by an [`Oper`] type.
-//! This keeps the execution logic separate from the input data:
-//!
-//! - The implementor holds no per-call state (it is typically a ZST or a
-//!   thin adapter with injected dependencies).
-//! - All per-call state resides in the [`Oper`] value.
-//!
-//! # Context
-//!
-//! [`Step`] additionally takes a context type `C` — the environment inside
-//! which the step executes (e.g. a database connection, a domain aggregate
-//! root).  It is provided by the caller (often obtained through
-//! [`Nucl::coord`](crate::nucl::Nucl::coord)) and passed by mutable
-//! reference to [`step`](Step::step).
+//! A [`Run`] is an *async executor* that processes an [`Oper`] directly,
+//! without any context. Use it for side effects that should execute outside
+//! the transactional boundary.
 
 use std::future::Future;
 
@@ -37,11 +19,8 @@ use crate::oper::Oper;
 
 /// An async executor that processes an [`Oper`] against a given context.
 ///
-/// # Type parameters
-///
 /// * `O` — the [`Oper`] type this step can execute.
-/// * `C` — the context type this step requires (e.g. a database connection,
-///   a repository handle, or a domain aggregate).
+/// * `C` — the context type this step requires.
 pub trait Step<O, C>
 where
     O: Oper,
@@ -50,9 +29,6 @@ where
     type Error;
 
     /// Execute the operation against the given context and return its output.
-    ///
-    /// * `cx` — the mutable context supplied by the caller.
-    /// * `oper` — the operation containing the input arguments.
     fn step(
         &self,
         cx: &mut C,
@@ -60,23 +36,36 @@ where
     ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }
 
+/// An [`Oper`] extension trait that invokes a [`Step`] from the operation.
+///
+/// Enable the `oper_ext` feature and import [`OperStep`] to write
+/// `oper.step_on(repo, context)` instead of `repo.step(context, &oper)`.
+/// The operation remains borrowed for the duration of the returned future.
+#[cfg(feature = "oper_ext")]
+pub trait OperStep<C>: Oper {
+    /// Executes this operation with `repo` and `cx`.
+    ///
+    /// This is equivalent to `repo.step(cx, self)`.
+    fn step_on<'a, S>(
+        &'a self,
+        repo: &'a S,
+        cx: &'a mut C,
+    ) -> impl Future<Output = Result<Self::Output, <S as Step<Self, C>>::Error>> + Send + 'a
+    where
+        Self: Sized,
+        S: Step<Self, C> + ?Sized,
+    {
+        repo.step(cx, self)
+    }
+}
+
+#[cfg(feature = "oper_ext")]
+impl<O, C> OperStep<C> for O where O: Oper {}
+
 /// A non-transactional executor that processes an [`Oper`] directly.
 ///
-/// Unlike [`Step`], which executes inside a managed context (typically a
-/// transaction), [`Run`] bypasses the context entirely — it takes only `&self`
-/// and the [`Oper`].  Use this trait for operations that don't need transactional
-/// guarantees, such as side effects dispatched after a transaction completes
-/// (e.g. sending emails, publishing events, calling external APIs).
-///
-/// # Relation to [`Step`]
-///
-/// Both traits share the same separation of data ([`Oper`]) from logic (the
-/// executor).  Choose [`Step`] when the operation needs a mutable context;
-/// choose [`Run`] when the operation is self-contained.
-///
-/// # Type parameters
-///
-/// * `O` — the [`Oper`] type this executor can run.
+/// Use `#[drive(...)]` (with this crate's `macro` feature enabled) to define
+/// an empty aggregate trait over one or more [`Run`] and [`Step`] bounds.
 pub trait Run<O>
 where
     O: Oper,
@@ -85,7 +74,30 @@ where
     type Error;
 
     /// Execute the operation and return its output.
-    ///
-    /// * `oper` — the operation containing the input arguments.
     fn run(&self, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }
+
+/// An [`Oper`] extension trait that invokes a [`Run`] from the operation.
+///
+/// Enable the `oper_ext` feature and import [`OperRun`] to write
+/// `oper.run_on(repo)` instead of `repo.run(&oper)`. The operation remains
+/// borrowed for the duration of the returned future.
+#[cfg(feature = "oper_ext")]
+pub trait OperRun: Oper {
+    /// Executes this operation with `repo`.
+    ///
+    /// This is equivalent to `repo.run(self)`.
+    fn run_on<'a, R>(
+        &'a self,
+        repo: &'a R,
+    ) -> impl Future<Output = Result<Self::Output, <R as Run<Self>>::Error>> + Send + 'a
+    where
+        Self: Sized,
+        R: Run<Self> + ?Sized,
+    {
+        repo.run(self)
+    }
+}
+
+#[cfg(feature = "oper_ext")]
+impl<O> OperRun for O where O: Oper {}

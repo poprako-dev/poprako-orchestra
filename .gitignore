@@ -4,4 +4,6 @@ target/
 .DS_Store
 **/.DS_Store
 
+poprako_orchestra_macro/Cargo.lock
+
 refs/

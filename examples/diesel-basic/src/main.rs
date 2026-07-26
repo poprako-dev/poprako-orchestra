@@ -1,38 +1,30 @@
 //! # Diesel-Basic — poprako-orchestra with diesel_async
 
-use poprako_orchestra::nucl::NuclError;
-use poprako_orchestra::nucl::Nucl;
-use poprako_orchestra::oper::Oper;
-use poprako_orchestra::step::Step;
-
-use diesel_async::AnsiTransactionManager;
-use diesel_async::AsyncPgConnection;
-use diesel_async::RunQueryDsl;
-use diesel_async::TransactionManager;
+use diesel_async::{AnsiTransactionManager, AsyncPgConnection, RunQueryDsl, TransactionManager};
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::{Object, Pool};
+
+use poprako_orchestra::{Oper, OperStep, drive};
+use poprako_orchestra::nucl::{Nucl, NuclError};
+use poprako_orchestra::step::Step;
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
 
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
-impl Oper for DecreaseProduct {
-    type Output = ();
-}
-
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
     pub quantity: i32,
-}
-
-impl Oper for CreateOrder {
-    type Output = ();
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +51,17 @@ impl std::error::Error for RegularError {
         self.0.source()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Domain — Repo trait
+// ---------------------------------------------------------------------------
+
+#[drive(
+    context = C,
+    error = RegularError,
+    step(DecreaseProduct, CreateOrder),
+)]
+pub trait OrderRepo<C> {}
 
 // ---------------------------------------------------------------------------
 // Infra — Context + Nucl
@@ -196,14 +199,22 @@ where
     C: Send,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: Step<DecreaseProduct, C, Error = RegularError>
-        + Step<CreateOrder, C, Error = RegularError>
-        + Send
-        + Sync,
+    R: OrderRepo<C> + Send + Sync,
 {
     match nucl.coord(async |cx| {
-        repo.step(cx, &DecreaseProduct { product_id, quantity }).await?;
-        repo.step(cx, &CreateOrder { user_id, product_id, quantity }).await?;
+        DecreaseProduct {
+            product_id,
+            quantity,
+        }
+        .step_on(repo, cx)
+        .await?;
+        CreateOrder {
+            user_id,
+            product_id,
+            quantity,
+        }
+        .step_on(repo, cx)
+        .await?;
         Ok(())
     }).await
     {

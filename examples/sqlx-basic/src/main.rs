@@ -1,34 +1,28 @@
 //! # SQLx-Basic — poprako-orchestra with sqlx
 
-use poprako_orchestra::nucl::Nucl;
-use poprako_orchestra::nucl::NuclError;
-use poprako_orchestra::oper::Oper;
+use sqlx::{PgPool, Postgres, Transaction};
+
+use poprako_orchestra::{Oper, OperStep, drive};
+use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
-use sqlx::PgPool;
-use sqlx::Postgres;
-use sqlx::Transaction;
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
 
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
-impl Oper for DecreaseProduct {
-    type Output = ();
-}
-
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
     pub quantity: i32,
-}
-
-impl Oper for CreateOrder {
-    type Output = ();
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +49,17 @@ impl std::error::Error for RegularError {
         self.0.source()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Domain — Repo trait
+// ---------------------------------------------------------------------------
+
+#[drive(
+    context = C,
+    error = RegularError,
+    step(DecreaseProduct, CreateOrder),
+)]
+pub trait OrderRepo<C> {}
 
 // ---------------------------------------------------------------------------
 // Infra — Context + Nucl
@@ -147,30 +152,23 @@ where
     C: Send,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: Step<DecreaseProduct, C, Error = RegularError>
-        + Step<CreateOrder, C, Error = RegularError>
-        + Send
-        + Sync,
+    R: OrderRepo<C> + Send + Sync,
 {
     match nucl
         .coord(async |cx| {
-            repo.step(
-                cx,
-                &DecreaseProduct {
+            DecreaseProduct {
                     product_id,
                     quantity,
-                },
-            )
+                }
+            .step_on(repo, cx)
             .await?;
 
-            repo.step(
-                cx,
-                &CreateOrder {
+            CreateOrder {
                     user_id,
                     product_id,
                     quantity,
-                },
-            )
+                }
+            .step_on(repo, cx)
             .await?;
 
             Ok(())

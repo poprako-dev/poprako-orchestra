@@ -7,4 +7,4 @@ edition = "2024"
 publish = false
 
 [dependencies]
-poprako-orchestra = { path = "../.." }
+poprako-orchestra = { path = "../..", features = ["macro", "oper_ext"] }

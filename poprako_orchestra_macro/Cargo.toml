@@ -1,0 +1,19 @@
+[package]
+name = "poprako-orchestra-macro"
+version = "0.2.3"
+edition = "2024"
+description = "Procedural macros for poprako-orchestra"
+license = "MIT"
+repository = "https://github.com/poprako-dev/poprako-orchestra"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+proc-macro-crate = "3"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+trybuild = "1"

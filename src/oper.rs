@@ -25,7 +25,26 @@
 /// declares what value is produced when the operation executes
 /// successfully.
 ///
-/// # Example
+/// Use the [`Oper`] derive macro for a concise definition that generates the
+/// trait implementation while leaving the struct declaration entirely under
+/// your control. Enable the crate's `macro` feature to use it.
+///
+/// # Examples
+///
+/// **Derive macro (preferred):**
+///
+/// ```ignore
+/// use poprako_orchestra::Oper;
+///
+/// #[derive(Oper)]
+/// #[oper(output = ())]
+/// pub struct CreateUser {
+///     pub name: String,
+///     pub email: String,
+/// }
+/// ```
+///
+/// **Manual:**
 ///
 /// ```
 /// use poprako_orchestra::oper::Oper;

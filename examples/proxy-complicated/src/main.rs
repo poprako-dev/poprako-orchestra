@@ -17,38 +17,48 @@
 //! `P` is monomorphized at compile time, so this abstraction introduces no
 //! dynamic dispatch.
 
-use poprako_orchestra::{Oper, Proxy, Run, Step};
+use poprako_orchestra::{Oper, OperProxy, Proxy, Run, Step, drive};
 
 pub struct Context {
     pub events: Vec<String>,
 }
 
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct EnsureCustomer<'a> {
     pub customer_id: &'a str,
 }
 
-impl Oper for EnsureCustomer<'_> {
-    type Output = ();
-}
-
+#[derive(Oper)]
+#[oper(output = ())]
 pub struct ReserveStock<'a> {
     pub sku: &'a str,
     pub quantity: u32,
 }
 
-impl Oper for ReserveStock<'_> {
-    type Output = ();
-}
-
+#[derive(Oper)]
+#[oper(output = u64)]
 pub struct CreateOrder<'a> {
     pub customer_id: &'a str,
     pub sku: &'a str,
     pub quantity: u32,
 }
 
-impl Oper for CreateOrder<'_> {
-    type Output = u64;
-}
+#[drive(
+    context = Context,
+    error = String,
+    run(
+        for<'a> EnsureCustomer<'a>,
+        for<'a> ReserveStock<'a>,
+        for<'a> CreateOrder<'a>,
+    ),
+    step(
+        for<'a> EnsureCustomer<'a>,
+        for<'a> ReserveStock<'a>,
+        for<'a> CreateOrder<'a>,
+    ),
+)]
+pub trait OrderRepo {}
 
 /// A logical atomic operation. Its dependency is `P`, not a repository:
 /// `Run` and `Step` have already been erased into `Proxy` by the usecase.
@@ -66,17 +76,17 @@ impl OrderComplex {
             + for<'a> Proxy<ReserveStock<'a>, Error = String>
             + for<'a> Proxy<CreateOrder<'a>, Error = String>,
     {
-        proxy.exec(&EnsureCustomer { customer_id }).await?;
+        EnsureCustomer { customer_id }.proxy_on(proxy).await?;
 
-        proxy.exec(&ReserveStock { sku, quantity }).await?;
+        ReserveStock { sku, quantity }.proxy_on(proxy).await?;
 
-        proxy
-            .exec(&CreateOrder {
-                customer_id,
-                sku,
-                quantity,
-            })
-            .await
+        CreateOrder {
+            customer_id,
+            sku,
+            quantity,
+        }
+        .proxy_on(proxy)
+        .await
     }
 }
 
@@ -139,9 +149,9 @@ impl Step<ReserveStock<'_>, Context> for InventoryRepo {
     }
 }
 
-pub struct OrderRepo;
+pub struct OrderRepoImpl;
 
-impl Run<CreateOrder<'_>> for OrderRepo {
+impl Run<CreateOrder<'_>> for OrderRepoImpl {
     type Error = String;
 
     async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
@@ -149,7 +159,7 @@ impl Run<CreateOrder<'_>> for OrderRepo {
     }
 }
 
-impl Step<CreateOrder<'_>, Context> for OrderRepo {
+impl Step<CreateOrder<'_>, Context> for OrderRepoImpl {
     type Error = String;
 
     async fn step(
@@ -215,6 +225,6 @@ where
 }
 
 fn main() {
-    let _ = place_via_run::<CustomerRepo, InventoryRepo, OrderRepo>;
-    let _ = place_via_step::<CustomerRepo, InventoryRepo, OrderRepo>;
+    let _ = place_via_run::<CustomerRepo, InventoryRepo, OrderRepoImpl>;
+    let _ = place_via_step::<CustomerRepo, InventoryRepo, OrderRepoImpl>;
 }

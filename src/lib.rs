@@ -34,3 +34,17 @@ pub use oper::Oper;
 pub use step::{Run, Step};
 
 pub use proxy::Proxy;
+
+#[cfg(feature = "oper_ext")]
+pub use proxy::OperProxy;
+
+#[cfg(feature = "oper_ext")]
+pub use step::{OperRun, OperStep};
+
+#[cfg(feature = "macro")]
+/// Derives [`Oper`] from an `#[oper(output = Type)]` attribute.
+pub use poprako_orchestra_macro::Oper;
+
+#[cfg(feature = "macro")]
+/// Creates an empty aggregate trait over [`Run`] and [`Step`] bounds.
+pub use poprako_orchestra_macro::drive;

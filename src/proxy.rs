@@ -16,6 +16,31 @@ where
     fn exec(&mut self, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
 }
 
+/// An [`Oper`] extension trait that executes an operation through a [`Proxy`].
+///
+/// Enable the `oper_ext` feature and import [`OperProxy`] to write
+/// `oper.proxy_on(proxy)` instead of `proxy.exec(&oper)`. The operation and
+/// proxy remain borrowed for the duration of the returned future.
+#[cfg(feature = "oper_ext")]
+pub trait OperProxy: Oper {
+    /// Executes this operation through `proxy`.
+    ///
+    /// This is equivalent to `proxy.exec(self)`.
+    fn proxy_on<'a, P>(
+        &'a self,
+        proxy: &'a mut P,
+    ) -> impl Future<Output = Result<Self::Output, <P as Proxy<Self>>::Error>> + Send + 'a
+    where
+        Self: Sized,
+        P: Proxy<Self> + ?Sized,
+    {
+        proxy.exec(self)
+    }
+}
+
+#[cfg(feature = "oper_ext")]
+impl<O> OperProxy for O where O: Oper {}
+
 /// Builds a proxy that dispatches operations through [`Run`](crate::Run).
 ///
 /// Each row associates a repository identifier with the operation types it
