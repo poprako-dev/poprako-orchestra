@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "poprako-orchestra-macro"
-version = "0.2.3"
+version = "0.1.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
