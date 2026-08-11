@@ -1,4 +1,4 @@
-use crate::Oper;
+use crate::{AtLeast, Level, Oper};
 
 /// Executes an [`Oper`] through a repository-backed proxy.
 ///
@@ -9,6 +9,9 @@ pub trait Proxy<O>
 where
     O: Oper,
 {
+    /// The actual transaction level preserved by this proxy.
+    type Level: Level + AtLeast<O::Level>;
+
     /// Error returned when the proxied operation cannot be executed.
     type Error;
 
@@ -48,13 +51,17 @@ impl<O> OperProxy for O where O: Oper {}
 /// lifetimes with `for<'a, 'b>`, for example:
 ///
 /// ```
-/// # use poprako_orchestra::{Oper, Run, run_proxy};
+/// # use poprako_orchestra::{Level, Oper, Run, run_proxy};
 /// # struct Repo;
+/// # struct Transactional;
+/// # impl Level for Transactional {}
 /// # struct BorrowedOper<'a, 'b>(&'a str, &'b str);
 /// # impl Oper for BorrowedOper<'_, '_> {
 /// #     type Output = ();
+/// #     type Level = Transactional;
 /// # }
 /// # impl Run<BorrowedOper<'_, '_>> for Repo {
+/// #     type Level = Transactional;
 /// #     type Error = ();
 /// #
 /// #     async fn run(&self, _oper: &BorrowedOper<'_, '_>) -> Result<(), Self::Error> {
@@ -171,6 +178,7 @@ macro_rules! run_proxy {
         where
             $repo: $crate::Run<$oper>,
         {
+            type Level = <$repo as $crate::Run<$oper>>::Level;
             type Error = <$repo as $crate::Run<$oper>>::Error;
 
             fn exec(
@@ -236,6 +244,7 @@ macro_rules! run_proxy {
         where
             $repo: $crate::Run<$oper>,
         {
+            type Level = <$repo as $crate::Run<$oper>>::Level;
             type Error = <$repo as $crate::Run<$oper>>::Error;
 
             fn exec(
@@ -469,8 +478,12 @@ macro_rules! step_proxy {
                 $($all_repo),+
             >
         where
+            $context_ty: $crate::Scope,
+            <$context_ty as $crate::Scope>::Level:
+                $crate::AtLeast<<$oper as $crate::Oper>::Level>,
             $repo: $crate::Step<$oper, $context_ty>,
         {
+            type Level = <$context_ty as $crate::Scope>::Level;
             type Error =
                 <$repo as $crate::Step<$oper, $context_ty>>::Error;
 
@@ -516,8 +529,12 @@ macro_rules! step_proxy {
                 $($all_repo),+
             >
         where
+            $context_ty: $crate::Scope,
+            <$context_ty as $crate::Scope>::Level:
+                $crate::AtLeast<<$oper as $crate::Oper>::Level>,
             $repo: $crate::Step<$oper, $context_ty>,
         {
+            type Level = <$context_ty as $crate::Scope>::Level;
             type Error =
                 <$repo as $crate::Step<$oper, $context_ty>>::Error;
 
@@ -544,29 +561,41 @@ macro_rules! step_proxy {
 mod tests {
     use super::*;
 
-    use crate::{Run, Step};
+    use crate::{Level, Run, Scope, Step};
+
+    pub struct Transactional;
+
+    impl Level for Transactional {}
+
+    impl Scope for () {
+        type Level = Transactional;
+    }
 
     struct PlainOper;
 
     impl Oper for PlainOper {
         type Output = ();
+        type Level = Transactional;
     }
 
     struct BorrowedOper<'a>(&'a str);
 
     impl Oper for BorrowedOper<'_> {
         type Output = ();
+        type Level = Transactional;
     }
 
     struct DoublyBorrowedOper<'first, 'second>(&'first str, &'second str);
 
     impl Oper for DoublyBorrowedOper<'_, '_> {
         type Output = ();
+        type Level = Transactional;
     }
 
     struct Repo;
 
     impl Run<PlainOper> for Repo {
+        type Level = Transactional;
         type Error = ();
 
         async fn run(&self, _oper: &PlainOper) -> Result<(), Self::Error> {
@@ -575,6 +604,7 @@ mod tests {
     }
 
     impl Run<BorrowedOper<'_>> for Repo {
+        type Level = Transactional;
         type Error = ();
 
         async fn run(&self, oper: &BorrowedOper<'_>) -> Result<(), Self::Error> {
@@ -584,6 +614,7 @@ mod tests {
     }
 
     impl Run<DoublyBorrowedOper<'_, '_>> for Repo {
+        type Level = Transactional;
         type Error = ();
 
         async fn run(&self, oper: &DoublyBorrowedOper<'_, '_>) -> Result<(), Self::Error> {

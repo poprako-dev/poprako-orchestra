@@ -20,6 +20,8 @@
 use std::future::Future;
 use std::ops::AsyncFnOnce;
 
+use crate::{Level, Scope};
+
 /// Discriminates between backend-infrastructure failures and step-level
 /// business failures.
 #[derive(Debug)]
@@ -40,10 +42,10 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Backend(error) => {
-                write!(f, "transaction backend error: {error}")
+                write!(f, "transaction backend error: {}", error)
             }
             Self::Step(error) => {
-                write!(f, "transaction step error: {error}")
+                write!(f, "transaction step error: {}", error)
             }
         }
     }
@@ -65,11 +67,14 @@ where
 /// A transactional nucleus that provides a managed [`Context`](Nucl::Context) and coordinates
 /// the execution of application logic inside it.
 pub trait Nucl {
+    /// The actual transaction level guaranteed by this nucleus.
+    type Level: Level;
+
     /// Error type produced by the backend itself (begin / commit / rollback).
     type Error;
 
     /// Context type provisioned for each [`coord`](Nucl::coord) call.
-    type Context;
+    type Context: Scope<Level = Self::Level>;
 
     /// Run an async computation inside the nucleus's managed context.
     ///

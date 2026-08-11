@@ -1,15 +1,19 @@
 use std::marker::PhantomData;
 
-use poprako_orchestra::{Oper, Run, Step, drive};
+use poprako_orchestra::{AtLeast, Level, Oper, Run, Scope, Step, drive};
+
+struct Transactional;
+
+impl Level for Transactional {}
 
 #[derive(Oper)]
-#[oper(output = T)]
+#[oper(output = T, level = Transactional)]
 struct FindUser<T, const N: usize> {
     _payload: T,
 }
 
 #[derive(Oper)]
-#[oper(output = T)]
+#[oper(level = Transactional, output = T)]
 struct UpdateUser<'a, 'b, T, const N: usize> {
     marker: PhantomData<(&'a (), &'b (), T)>,
 }
@@ -34,6 +38,7 @@ impl<T, const N: usize> Run<FindUser<T, N>> for Repo
 where
     T: Sync,
 {
+    type Level = Transactional;
     type Error = Error;
 
     async fn run(&self, _oper: &FindUser<T, N>) -> Result<T, Self::Error> {
@@ -43,7 +48,8 @@ where
 
 impl<'a, 'b, C, T, const N: usize> Step<UpdateUser<'a, 'b, T, N>, C> for Repo
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: AtLeast<Transactional>,
     T: Sync,
 {
     type Error = Error;
@@ -59,12 +65,19 @@ where
 
 fn assert_user_repo<C, T, const N: usize>()
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: AtLeast<Transactional>,
     T: Send + Sync,
     Repo: UserRepo<C, T, N>,
 {
 }
 
+struct Context;
+
+impl Scope for Context {
+    type Level = Transactional;
+}
+
 fn main() {
-    assert_user_repo::<(), String, 1>();
+    assert_user_repo::<Context, String, 1>();
 }

@@ -2,7 +2,8 @@
 
 use sqlx::{PgPool, Postgres, Transaction};
 
-use poprako_orchestra::{Oper, OperStep, drive};
+use poprako_orchestra::OperStep as _;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
 
@@ -10,15 +11,25 @@ use poprako_orchestra::step::Step;
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
 
+pub struct RepeatableRead;
+
+impl Level for RepeatableRead {}
+
+pub struct Serializable;
+
+impl Level for Serializable {}
+
+impl AtLeast<RepeatableRead> for Serializable {}
+
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(output = (), level = RepeatableRead)]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(level = RepeatableRead, output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
@@ -67,6 +78,10 @@ pub trait OrderRepo<C> {}
 
 pub struct PgContext(Transaction<'static, Postgres>);
 
+impl Scope for PgContext {
+    type Level = Serializable;
+}
+
 pub struct PgNucl(PgPool);
 
 impl PgNucl {
@@ -76,6 +91,7 @@ impl PgNucl {
 }
 
 impl Nucl for PgNucl {
+    type Level = Serializable;
     type Error = sqlx::Error;
     type Context = PgContext;
 
@@ -85,7 +101,11 @@ impl Nucl for PgNucl {
         T: Send,
         E: Send,
     {
-        let tx = self.0.begin().await.map_err(NuclError::Backend)?;
+        let mut tx = self.0.begin().await.map_err(NuclError::Backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            .execute(&mut *tx)
+            .await
+            .map_err(NuclError::Backend)?;
 
         let mut cx = PgContext(tx);
 
@@ -149,7 +169,8 @@ async fn run_order_usecase<C, N, R>(
     quantity: i32,
 ) -> Result<(), RegularError>
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
     R: OrderRepo<C> + Send + Sync,

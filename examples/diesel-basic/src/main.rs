@@ -1,10 +1,13 @@
 //! # Diesel-Basic — poprako-orchestra with diesel_async
 
-use diesel_async::{AnsiTransactionManager, AsyncPgConnection, RunQueryDsl, TransactionManager};
+use diesel_async::RunQueryDsl as _;
+use diesel_async::TransactionManager as _;
+use diesel_async::{AnsiTransactionManager, AsyncPgConnection};
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::{Object, Pool};
 
-use poprako_orchestra::{Oper, OperStep, drive};
+use poprako_orchestra::OperStep as _;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
 
@@ -12,15 +15,25 @@ use poprako_orchestra::step::Step;
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
 
+pub struct RepeatableRead;
+
+impl Level for RepeatableRead {}
+
+pub struct Serializable;
+
+impl Level for Serializable {}
+
+impl AtLeast<RepeatableRead> for Serializable {}
+
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(output = (), level = RepeatableRead)]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(level = RepeatableRead, output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
@@ -71,6 +84,10 @@ type Conn = Object<AsyncPgConnection>;
 
 pub struct PgContext(Conn);
 
+impl Scope for PgContext {
+    type Level = Serializable;
+}
+
 #[derive(Debug)]
 pub enum PgBackendError {
     Pool(String),
@@ -110,6 +127,7 @@ impl PgNucl {
 }
 
 impl Nucl for PgNucl {
+    type Level = Serializable;
     type Error = PgBackendError;
     type Context = PgContext;
 
@@ -123,6 +141,11 @@ impl Nucl for PgNucl {
             .map_err(|e| NuclError::Backend(PgBackendError::Pool(e.to_string())))?;
 
         AnsiTransactionManager::begin_transaction(&mut *conn)
+            .await
+            .map_err(|e| NuclError::Backend(PgBackendError::Diesel(e)))?;
+
+        diesel::sql_query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            .execute(&mut *conn)
             .await
             .map_err(|e| NuclError::Backend(PgBackendError::Diesel(e)))?;
 
@@ -196,7 +219,8 @@ async fn run_order_usecase<C, N, R>(
     quantity: i32,
 ) -> Result<(), RegularError>
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
     R: OrderRepo<C> + Send + Sync,

@@ -1,6 +1,6 @@
 [package]
 name = "poprako-orchestra"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
 description = "A unified transaction abstraction framework for Rust — decoupled Oper, Step, Nucl, and Run traits"
 license = "MIT"
@@ -15,7 +15,7 @@ macro = ["dep:poprako-orchestra-macro"]
 oper_ext = []
 
 [dependencies]
-poprako-orchestra-macro = { version = "0.1.0", path = "poprako_orchestra_macro", optional = true }
+poprako-orchestra-macro = { version = "0.2.0", path = "poprako_orchestra_macro", optional = true }
 
 [dev-dependencies]
 trybuild = "1"

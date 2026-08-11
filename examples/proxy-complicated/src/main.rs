@@ -17,27 +17,36 @@
 //! `P` is monomorphized at compile time, so this abstraction introduces no
 //! dynamic dispatch.
 
-use poprako_orchestra::{Oper, OperProxy, Proxy, Run, Step, drive};
+use poprako_orchestra::OperProxy as _;
+use poprako_orchestra::{Level, Oper, Proxy, Run, Scope, Step, drive};
+
+pub struct Linearizable;
+
+impl Level for Linearizable {}
 
 pub struct Context {
     pub events: Vec<String>,
 }
 
+impl Scope for Context {
+    type Level = Linearizable;
+}
+
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(output = (), level = Linearizable)]
 pub struct EnsureCustomer<'a> {
     pub customer_id: &'a str,
 }
 
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(level = Linearizable, output = ())]
 pub struct ReserveStock<'a> {
     pub sku: &'a str,
     pub quantity: u32,
 }
 
 #[derive(Oper)]
-#[oper(output = u64)]
+#[oper(output = u64, level = Linearizable)]
 pub struct CreateOrder<'a> {
     pub customer_id: &'a str,
     pub sku: &'a str,
@@ -93,6 +102,7 @@ impl OrderComplex {
 pub struct CustomerRepo;
 
 impl Run<EnsureCustomer<'_>> for CustomerRepo {
+    type Level = Linearizable;
     type Error = String;
 
     async fn run(&self, oper: &EnsureCustomer<'_>) -> Result<(), Self::Error> {
@@ -123,6 +133,7 @@ impl Step<EnsureCustomer<'_>, Context> for CustomerRepo {
 pub struct InventoryRepo;
 
 impl Run<ReserveStock<'_>> for InventoryRepo {
+    type Level = Linearizable;
     type Error = String;
 
     async fn run(&self, oper: &ReserveStock<'_>) -> Result<(), Self::Error> {
@@ -152,6 +163,7 @@ impl Step<ReserveStock<'_>, Context> for InventoryRepo {
 pub struct OrderRepoImpl;
 
 impl Run<CreateOrder<'_>> for OrderRepoImpl {
+    type Level = Linearizable;
     type Error = String;
 
     async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {

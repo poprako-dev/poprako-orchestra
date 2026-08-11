@@ -2,16 +2,20 @@
 
 use std::marker::PhantomData;
 
-use poprako_orchestra::{Oper, Run, Step, drive};
+use poprako_orchestra::{Level, Oper, Run, Scope, Step, drive};
+
+struct Transactional;
+
+impl Level for Transactional {}
 
 #[derive(Oper)]
-#[oper(output = Option<String>)]
+#[oper(level = Transactional, output = Option<String>)]
 struct ExistAvatar<'a> {
     id: &'a str,
 }
 
 #[derive(Oper)]
-#[oper(output = T)]
+#[oper(output = T, level = Transactional)]
 struct GenericOper<'a, T>
 where
     T: std::fmt::Debug + 'a,
@@ -20,13 +24,13 @@ where
 }
 
 #[derive(Oper)]
-#[oper(output = T)]
+#[oper(level = Transactional, output = T)]
 struct FindUser<T> {
     _payload: T,
 }
 
 #[derive(Oper)]
-#[oper(output = T)]
+#[oper(output = T, level = Transactional)]
 struct UpdateUser<'a, 'b, T> {
     marker: PhantomData<(&'a (), &'b (), T)>,
 }
@@ -48,6 +52,7 @@ struct TestError;
 struct Repo;
 
 impl Run<ExistAvatar<'_>> for Repo {
+    type Level = Transactional;
     type Error = TestError;
 
     async fn run(&self, _oper: &ExistAvatar<'_>) -> Result<Option<String>, Self::Error> {
@@ -59,6 +64,7 @@ impl<T> Run<FindUser<T>> for Repo
 where
     T: Sync,
 {
+    type Level = Transactional;
     type Error = TestError;
 
     async fn run(&self, _oper: &FindUser<T>) -> Result<T, Self::Error> {
@@ -68,7 +74,8 @@ where
 
 impl<'a, 'b, C, T> Step<UpdateUser<'a, 'b, T>, C> for Repo
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: poprako_orchestra::AtLeast<Transactional>,
     T: Sync,
 {
     type Error = TestError;
@@ -100,11 +107,14 @@ fn derives_oper_for_plain_and_generic_structs() {
 fn assert_user_repo<C, T>()
 where
     T: std::fmt::Debug + Send + Sync,
-    C: Send,
+    C: Scope + Send,
+    C::Level: poprako_orchestra::AtLeast<Transactional>,
 {
     fn assert_impl<C, T, Repo>()
     where
         T: std::fmt::Debug + Send,
+        C: Scope,
+        C::Level: poprako_orchestra::AtLeast<Transactional>,
         Repo: UserRepo<C, T>,
     {
     }
@@ -112,7 +122,13 @@ where
     assert_impl::<C, T, Repo>();
 }
 
+struct Context;
+
+impl Scope for Context {
+    type Level = Transactional;
+}
+
 #[test]
 fn derives_aggregate_repo_trait() {
-    assert_user_repo::<(), String>();
+    assert_user_repo::<Context, String>();
 }

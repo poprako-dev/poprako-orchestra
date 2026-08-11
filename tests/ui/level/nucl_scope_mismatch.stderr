@@ -1,0 +1,16 @@
+error[E0271]: type mismatch resolving `<Context as Scope>::Level == Strong`
+  --> tests/ui/level/nucl_scope_mismatch.rs:19:20
+   |
+19 |     type Context = Context;
+   |                    ^^^^^^^ type mismatch resolving `<Context as Scope>::Level == Strong`
+   |
+note: expected this to be `Strong`
+  --> tests/ui/level/nucl_scope_mismatch.rs:12:18
+   |
+12 |     type Level = Weak;
+   |                  ^^^^
+note: required by a bound in `poprako_orchestra::Nucl::Context`
+  --> src/nucl.rs
+   |
+   |     type Context: Scope<Level = Self::Level>;
+   |                         ^^^^^^^^^^^^^^^^^^^ required by this bound in `Nucl::Context`

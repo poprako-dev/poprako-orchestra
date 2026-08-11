@@ -5,8 +5,8 @@
 //! three concerns:
 //!
 //! - **What** to do: described by the [`oper::Oper`] trait, which carries the
-//!   operation's input data and declares its [`Output`](oper::Oper::Output)
-//!   type.
+//!   operation's input data and declares its output and minimum transaction
+//!   level.
 //! - **How** to do it: described by the [`step::Step`] trait, which receives
 //!   an [`Oper`] and a mutable context, executes the operation,
 //!   and returns the output.
@@ -23,12 +23,14 @@
 //! the transactional engine (e.g. a database connection pool, a saga
 //! coordinator) that provides the context and handles commit / rollback.
 
+pub mod level;
 pub mod nucl;
 pub mod oper;
 pub mod step;
 
 pub mod proxy;
 
+pub use level::{AtLeast, Level, Scope};
 pub use nucl::Nucl;
 pub use oper::Oper;
 pub use step::{Run, Step};
@@ -42,7 +44,7 @@ pub use proxy::OperProxy;
 pub use step::{OperRun, OperStep};
 
 #[cfg(feature = "macro")]
-/// Derives [`Oper`] from an `#[oper(output = Type)]` attribute.
+/// Derives [`Oper`] from an `#[oper(output = Type, level = Level)]` attribute.
 pub use poprako_orchestra_macro::Oper;
 
 #[cfg(feature = "macro")]

@@ -1,6 +1,6 @@
 # poprako-orchestra
 
-A unified transaction abstraction framework for Rust — zero dependencies, pure `std`.
+A unified transaction abstraction framework for Rust with compile-time transaction-level checks.
 
 ## Overview
 
@@ -8,22 +8,38 @@ A unified transaction abstraction framework for Rust — zero dependencies, pure
 
 | Trait  | Role                        | Module              |
 |--------|-----------------------------| ------------------- |
-| `Oper` | **What** — the operation's input and output type | [`oper`] |
+| `Oper` | **What** — the operation's input, output, and minimum level | [`oper`] |
 | `Step` | **How** — async executor running inside a transaction | [`step`] |
-| `Nucl` | **Where** — the transactional backend (connection pool, saga, …) | [`nucl`] |
+| `Nucl` | **Where** — backend providing a scoped context and actual level | [`nucl`] |
 
 Plus a non-transactional variant:
 
 | Trait  | Role                        | Module              |
 |--------|-----------------------------| ------------------- |
-| `Run`  | **How (no tx)** — async executor that runs without a managed context | [`step`] |
+| `Run`  | **How (self-contained)** — executor declaring its actual guarantee | [`step`] |
+
+Transaction levels are application-defined marker types. `AtLeast<Required>`
+expresses compatibility, while `Scope` associates a context with the level it
+actually provides. The framework supplies only the reflexive relationship, so
+stronger levels explicitly declare every weaker level they satisfy.
 
 ## Quick example
 
 ```rust
-use poprako_orchestra::oper::Oper;
-use poprako_orchestra::step::Step;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, Step};
 use poprako_orchestra::nucl::{Nucl, NuclError};
+
+pub struct RepeatableRead;
+impl Level for RepeatableRead {}
+
+pub struct Serializable;
+impl Level for Serializable {}
+impl AtLeast<RepeatableRead> for Serializable {}
+
+pub struct DbConn;
+impl Scope for DbConn {
+    type Level = Serializable;
+}
 
 // 1. Define the operation (data)
 pub struct CreateUser {
@@ -32,6 +48,7 @@ pub struct CreateUser {
 
 impl Oper for CreateUser {
     type Output = u64; // user id
+    type Level = RepeatableRead;
 }
 
 // 2. Implement how to execute it
@@ -50,12 +67,19 @@ impl Step<CreateUser, DbConn> for UserRepo {
 }
 
 // 3. Wire it through a transactional nucleus
-fn create_user(nucl: &impl Nucl<Context = DbConn>, repo: &UserRepo, name: String) {
+async fn create_user(
+    nucl: &impl Nucl<Level = Serializable, Context = DbConn>,
+    repo: &UserRepo,
+    name: String,
+) {
     let result = nucl.coord(async |cx| {
         repo.step(cx, &CreateUser { name }).await
     }).await; // Result<u64, NuclError<db::Error, db::Error>>
 }
 ```
+
+With the `macro` feature, operations use both required fields (in either
+order): `#[oper(output = u64, level = RepeatableRead)]`.
 
 ## Why separate Oper from Step?
 

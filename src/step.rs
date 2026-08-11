@@ -7,14 +7,15 @@
 //! mutable context. It encapsulates the logic of running one atomic unit of
 //! work inside a transaction.
 //!
-//! # [`Run`] — without a transaction
+//! # [`Run`] — self-contained execution
 //!
 //! A [`Run`] is an *async executor* that processes an [`Oper`] directly,
-//! without any context. Use it for side effects that should execute outside
-//! the transactional boundary.
+//! without a caller-provided context. Its associated level states the
+//! guarantee provided by that execution strategy.
 
 use std::future::Future;
 
+use crate::level::{AtLeast, Level, Scope};
 use crate::oper::Oper;
 
 /// An async executor that processes an [`Oper`] against a given context.
@@ -24,6 +25,8 @@ use crate::oper::Oper;
 pub trait Step<O, C>
 where
     O: Oper,
+    C: Scope,
+    C::Level: AtLeast<O::Level>,
 {
     /// Error type that may occur during step execution.
     type Error;
@@ -42,7 +45,11 @@ where
 /// `oper.step_on(repo, context)` instead of `repo.step(context, &oper)`.
 /// The operation remains borrowed for the duration of the returned future.
 #[cfg(feature = "oper_ext")]
-pub trait OperStep<C>: Oper {
+pub trait OperStep<C>: Oper
+where
+    C: Scope,
+    C::Level: AtLeast<Self::Level>,
+{
     /// Executes this operation with `repo` and `cx`.
     ///
     /// This is equivalent to `repo.step(cx, self)`.
@@ -60,9 +67,15 @@ pub trait OperStep<C>: Oper {
 }
 
 #[cfg(feature = "oper_ext")]
-impl<O, C> OperStep<C> for O where O: Oper {}
+impl<O, C> OperStep<C> for O
+where
+    O: Oper,
+    C: Scope,
+    C::Level: AtLeast<O::Level>,
+{
+}
 
-/// A non-transactional executor that processes an [`Oper`] directly.
+/// A self-contained executor that processes an [`Oper`] directly.
 ///
 /// Use `#[drive(...)]` (with this crate's `macro` feature enabled) to define
 /// an empty aggregate trait over one or more [`Run`] and [`Step`] bounds.
@@ -70,6 +83,9 @@ pub trait Run<O>
 where
     O: Oper,
 {
+    /// The actual transaction level guaranteed by this executor.
+    type Level: Level + AtLeast<O::Level>;
+
     /// Error type that may occur during execution.
     type Error;
 

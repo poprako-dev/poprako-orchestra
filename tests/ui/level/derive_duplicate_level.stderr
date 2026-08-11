@@ -1,0 +1,5 @@
+error: duplicate `level` attribute
+ --> tests/ui/level/derive_duplicate_level.rs:7:44
+  |
+7 | #[oper(output = (), level = Transactional, level = Transactional)]
+  |                                            ^^^^^

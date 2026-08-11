@@ -37,7 +37,7 @@
 /// use poprako_orchestra::Oper;
 ///
 /// #[derive(Oper)]
-/// #[oper(output = ())]
+/// #[oper(output = (), level = Serializable)]
 /// pub struct CreateUser {
 ///     pub name: String,
 ///     pub email: String,
@@ -47,7 +47,10 @@
 /// **Manual:**
 ///
 /// ```
-/// use poprako_orchestra::oper::Oper;
+/// use poprako_orchestra::{Level, Oper};
+///
+/// pub struct Serializable;
+/// impl Level for Serializable {}
 ///
 /// pub struct CreateUser {
 ///     pub name: String,
@@ -56,9 +59,13 @@
 ///
 /// impl Oper for CreateUser {
 ///     type Output = ();
+///     type Level = Serializable;
 /// }
 /// ```
 pub trait Oper {
     /// The type of value produced when this operation succeeds.
     type Output;
+
+    /// The minimum transaction level required by this operation.
+    type Level: crate::Level;
 }

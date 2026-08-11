@@ -133,6 +133,14 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
     let error = &args.error;
     let mut bounds = Vec::<TypeParamBound>::new();
 
+    if !args.steps.is_empty() {
+        let context = args.context.as_ref().expect("validated step context");
+        item.generics
+            .make_where_clause()
+            .predicates
+            .push(syn::parse2(quote!(#context: #orchestra::Scope))?);
+    }
+
     for spec in &args.runs {
         let lifetimes = &spec.lifetimes;
         let oper = &spec.oper;
@@ -148,6 +156,13 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
         bounds.push(syn::parse2(quote!(
             #lifetimes #orchestra::Step<#oper, #context, Error = #error>
         ))?);
+        item.generics
+            .make_where_clause()
+            .predicates
+            .push(syn::parse2(quote!(
+                #lifetimes <#context as #orchestra::Scope>::Level:
+                    #orchestra::AtLeast<<#oper as #orchestra::Oper>::Level>
+            ))?);
     }
 
     item.supertraits.extend(bounds);

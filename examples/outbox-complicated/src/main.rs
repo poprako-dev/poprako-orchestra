@@ -6,18 +6,34 @@
 //! 1. [`Run`] — check user existence and retrieve the current avatar OSS key
 //!    (outside the transaction).
 //! 2. [`Step`] — clear the `avatar_url` column inside a transaction.
-//! 3. [`Run`] — insert an outbox event so a downstream consumer can clean up
-//!    the OSS resource (after the transaction commits).
+//! 3. [`Step`] — insert an outbox event in the same transaction so a
+//!    downstream consumer can clean up the OSS resource after commit.
 
 use sqlx::{PgPool, Postgres, Transaction};
 
-use poprako_orchestra::{Oper, OperRun, OperStep, drive};
+use poprako_orchestra::OperRun as _;
+use poprako_orchestra::OperStep as _;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::{Run, Step};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
 // ---------------------------------------------------------------------------
+
+pub struct ReadCommitted;
+
+impl Level for ReadCommitted {}
+
+pub struct RepeatableRead;
+
+impl Level for RepeatableRead {}
+
+pub struct Serializable;
+
+impl Level for Serializable {}
+
+impl AtLeast<RepeatableRead> for Serializable {}
 
 /// Check whether the user exists and return the current avatar OSS key (if
 /// any).  Executed **outside** the transaction so a non-existent user is
@@ -27,7 +43,7 @@ use poprako_orchestra::step::{Run, Step};
 /// `Some(Some(key))` — user exists **and** has an avatar to clean up.
 /// `Some(None)`      — user exists but has no avatar (skip OSS cleanup).
 #[derive(Oper)]
-#[oper(output = Option<String>)]
+#[oper(output = Option<String>, level = ReadCommitted)]
 pub struct ExistAvatar<'a> {
     pub id: &'a str,
 }
@@ -35,7 +51,7 @@ pub struct ExistAvatar<'a> {
 /// Clear the `avatar_url` column to `NULL`.  Executed **inside** the
 /// transaction so any subsequent rollback restores the URL.
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(level = RepeatableRead, output = ())]
 pub struct DeleteAvatar<'a> {
     pub id: &'a str,
 }
@@ -44,7 +60,7 @@ pub struct DeleteAvatar<'a> {
 /// OSS resource cleanup.  Executed **inside** the same transaction as the
 /// avatar deletion so the two stay atomic.
 #[derive(Oper)]
-#[oper(output = ())]
+#[oper(output = (), level = RepeatableRead)]
 pub struct CleanOssImage<'a> {
     pub id: &'a str,
     pub key: &'a str,
@@ -100,6 +116,10 @@ pub trait OutboxRepo<C> {}
 
 pub struct PgContext(Transaction<'static, Postgres>);
 
+impl Scope for PgContext {
+    type Level = Serializable;
+}
+
 pub struct PgNucl(PgPool);
 
 impl PgNucl {
@@ -109,6 +129,7 @@ impl PgNucl {
 }
 
 impl Nucl for PgNucl {
+    type Level = Serializable;
     type Error = sqlx::Error;
     type Context = PgContext;
 
@@ -118,7 +139,11 @@ impl Nucl for PgNucl {
         T: Send,
         E: Send,
     {
-        let tx = self.0.begin().await.map_err(NuclError::Backend)?;
+        let mut tx = self.0.begin().await.map_err(NuclError::Backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            .execute(&mut *tx)
+            .await
+            .map_err(NuclError::Backend)?;
 
         let mut cx = PgContext(tx);
 
@@ -144,6 +169,7 @@ pub struct UserRepoImpl {
 }
 
 impl Run<ExistAvatar<'_>> for UserRepoImpl {
+    type Level = ReadCommitted;
     type Error = RegularError;
 
     async fn run(&self, oper: &ExistAvatar<'_>) -> Result<Option<String>, RegularError> {
@@ -211,7 +237,8 @@ async fn delete_avatar_usecase<C, N, R1, R2>(
     key: &str,
 ) -> Result<(), RegularError>
 where
-    C: Send,
+    C: Scope + Send,
+    C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
     R1: UserRepo<C> + Send + Sync,
