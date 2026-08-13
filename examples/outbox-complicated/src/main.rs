@@ -13,9 +13,9 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 use poprako_orchestra::OperRun as _;
 use poprako_orchestra::OperStep as _;
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::{Run, Step};
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -43,7 +43,7 @@ impl AtLeast<RepeatableRead> for Serializable {}
 /// `Some(Some(key))` — user exists **and** has an avatar to clean up.
 /// `Some(None)`      — user exists but has no avatar (skip OSS cleanup).
 #[derive(Oper)]
-#[oper(output = Option<String>, level = ReadCommitted)]
+#[oper(output = Option<String>)]
 pub struct ExistAvatar<'a> {
     pub id: &'a str,
 }
@@ -51,7 +51,7 @@ pub struct ExistAvatar<'a> {
 /// Clear the `avatar_url` column to `NULL`.  Executed **inside** the
 /// transaction so any subsequent rollback restores the URL.
 #[derive(Oper)]
-#[oper(level = RepeatableRead, output = ())]
+#[oper(output = ())]
 pub struct DeleteAvatar<'a> {
     pub id: &'a str,
 }
@@ -60,7 +60,7 @@ pub struct DeleteAvatar<'a> {
 /// OSS resource cleanup.  Executed **inside** the same transaction as the
 /// avatar deletion so the two stay atomic.
 #[derive(Oper)]
-#[oper(output = (), level = RepeatableRead)]
+#[oper(output = ())]
 pub struct CleanOssImage<'a> {
     pub id: &'a str,
     pub key: &'a str,
@@ -169,7 +169,6 @@ pub struct UserRepoImpl {
 }
 
 impl Run<ExistAvatar<'_>> for UserRepoImpl {
-    type Level = ReadCommitted;
     type Error = RegularError;
 
     async fn run(&self, oper: &ExistAvatar<'_>) -> Result<Option<String>, RegularError> {
@@ -190,6 +189,7 @@ impl Run<ExistAvatar<'_>> for UserRepoImpl {
 }
 
 impl Step<DeleteAvatar<'_>, PgContext> for UserRepoImpl {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &DeleteAvatar<'_>) -> Result<(), RegularError> {
@@ -205,13 +205,10 @@ impl Step<DeleteAvatar<'_>, PgContext> for UserRepoImpl {
 pub struct OutboxRepoImpl;
 
 impl Step<CleanOssImage<'_>, PgContext> for OutboxRepoImpl {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
-    async fn step(
-        &self,
-        cx: &mut PgContext,
-        oper: &CleanOssImage<'_>,
-    ) -> Result<(), RegularError> {
+    async fn step(&self, cx: &mut PgContext, oper: &CleanOssImage<'_>) -> Result<(), RegularError> {
         sqlx::query(
             "INSERT INTO outbox (event_type, user_id, oss_key) \
              VALUES ('avatar_deleted', $1, $2)",
@@ -241,8 +238,8 @@ where
     C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R1: UserRepo<C> + Send + Sync,
-    R2: OutboxRepo<C> + Send + Sync,
+    R1: UserRepo<C> + for<'a> Step<DeleteAvatar<'a>, C, Level = RepeatableRead> + Send + Sync,
+    R2: OutboxRepo<C> + for<'a> Step<CleanOssImage<'a>, C, Level = RepeatableRead> + Send + Sync,
 {
     // ── Step 1: check existence + get avatar key (outside tx) ──
     let _ = ExistAvatar { id }.run_on(user_repo).await?;

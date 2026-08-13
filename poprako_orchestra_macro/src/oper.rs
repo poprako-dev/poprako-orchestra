@@ -4,12 +4,10 @@ use syn::{Attribute, DeriveInput, Result, Type};
 
 struct OperArgs {
     output: Type,
-    level: Type,
 }
 
 fn parse_oper_attribute(attrs: &[Attribute]) -> Result<OperArgs> {
     let mut output = None;
-    let mut level = None;
 
     for attr in attrs {
         if !attr.path().is_ident("oper") {
@@ -27,34 +25,18 @@ fn parse_oper_attribute(attrs: &[Attribute]) -> Result<OperArgs> {
                 return Ok(());
             }
 
-            if meta.path.is_ident("level") {
-                if level.is_some() {
-                    return Err(meta.error("duplicate `level` attribute"));
-                }
-
-                let value = meta.value()?;
-                level = Some(value.parse()?);
-                return Ok(());
-            }
-
-            Err(meta.error("unsupported oper attribute; expected `output` or `level`"))
+            Err(meta.error("unsupported oper attribute; expected `output`"))
         })?;
     }
 
     let output = output.ok_or_else(|| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
-            "missing `output` in `#[oper(output = Type, level = Level)]`",
-        )
-    })?;
-    let level = level.ok_or_else(|| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "missing `level` in `#[oper(output = Type, level = Level)]`",
+            "missing `output` in `#[oper(output = Type)]`",
         )
     })?;
 
-    Ok(OperArgs { output, level })
+    Ok(OperArgs { output })
 }
 
 pub fn derive_oper(input: TokenStream) -> TokenStream {
@@ -66,13 +48,11 @@ pub fn derive_oper(input: TokenStream) -> TokenStream {
         Err(error) => return error.into_compile_error().into(),
     };
     let output = args.output;
-    let level = args.level;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
         impl #impl_generics Oper for #name #ty_generics #where_clause {
             type Output = #output;
-            type Level = #level;
         }
     }
     .into()

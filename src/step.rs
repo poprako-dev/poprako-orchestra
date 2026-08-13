@@ -10,8 +10,7 @@
 //! # [`Run`] — self-contained execution
 //!
 //! A [`Run`] is an *async executor* that processes an [`Oper`] directly,
-//! without a caller-provided context. Its associated level states the
-//! guarantee provided by that execution strategy.
+//! without a caller-provided context and therefore has no transaction level.
 
 use std::future::Future;
 
@@ -26,8 +25,10 @@ pub trait Step<O, C>
 where
     O: Oper,
     C: Scope,
-    C::Level: AtLeast<O::Level>,
 {
+    /// The minimum transaction level required by this execution strategy.
+    type Level: Level;
+
     /// Error type that may occur during step execution.
     type Error;
 
@@ -36,7 +37,9 @@ where
         &self,
         cx: &mut C,
         oper: &O,
-    ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send
+    where
+        C::Level: AtLeast<Self::Level>;
 }
 
 /// An [`Oper`] extension trait that invokes a [`Step`] from the operation.
@@ -48,7 +51,6 @@ where
 pub trait OperStep<C>: Oper
 where
     C: Scope,
-    C::Level: AtLeast<Self::Level>,
 {
     /// Executes this operation with `repo` and `cx`.
     ///
@@ -61,6 +63,7 @@ where
     where
         Self: Sized,
         S: Step<Self, C> + ?Sized,
+        C::Level: AtLeast<S::Level>,
     {
         repo.step(cx, self)
     }
@@ -71,7 +74,6 @@ impl<O, C> OperStep<C> for O
 where
     O: Oper,
     C: Scope,
-    C::Level: AtLeast<O::Level>,
 {
 }
 
@@ -83,9 +85,6 @@ pub trait Run<O>
 where
     O: Oper,
 {
-    /// The actual transaction level guaranteed by this executor.
-    type Level: Level + AtLeast<O::Level>;
-
     /// Error type that may occur during execution.
     type Error;
 

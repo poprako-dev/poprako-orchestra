@@ -5,11 +5,10 @@
 //! three concerns:
 //!
 //! - **What** to do: described by the [`oper::Oper`] trait, which carries the
-//!   operation's input data and declares its output and minimum transaction
-//!   level.
+//!   operation's input data and declares its output.
 //! - **How** to do it: described by the [`step::Step`] trait, which receives
 //!   an [`Oper`] and a mutable context, executes the operation,
-//!   and returns the output.
+//!   returns the output, and declares the transaction level it requires.
 //! - **Where** to run it: described by the [`nucl::Nucl`] trait, which
 //!   provides a managed context scope where the application can execute
 //!   arbitrary async logic with proper error discrimination (backend errors
@@ -44,7 +43,7 @@ pub use proxy::OperProxy;
 pub use step::{OperRun, OperStep};
 
 #[cfg(feature = "macro")]
-/// Derives [`Oper`] from an `#[oper(output = Type, level = Level)]` attribute.
+/// Derives [`Oper`] from an `#[oper(output = Type)]` attribute.
 pub use poprako_orchestra_macro::Oper;
 
 #[cfg(feature = "macro")]

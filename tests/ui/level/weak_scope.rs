@@ -14,11 +14,11 @@ impl Scope for Context {
 struct StrongOper;
 impl Oper for StrongOper {
     type Output = ();
-    type Level = Strong;
 }
 
 struct Repo;
 impl Step<StrongOper, Context> for Repo {
+    type Level = Strong;
     type Error = ();
 
     async fn step(&self, _context: &mut Context, _oper: &StrongOper) -> Result<(), ()> {
@@ -26,4 +26,9 @@ impl Step<StrongOper, Context> for Repo {
     }
 }
 
-fn main() {}
+fn main() {
+    let repo = Repo;
+    let mut context = Context;
+    let oper = StrongOper;
+    let _ = repo.step(&mut context, &oper);
+}

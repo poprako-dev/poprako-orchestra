@@ -16,12 +16,15 @@ impl Scope for Context {
 struct Read;
 impl Oper for Read {
     type Output = ();
-    type Level = RepeatableRead;
+}
+
+struct Write;
+impl Oper for Write {
+    type Output = ();
 }
 
 struct Repo;
 impl Run<Read> for Repo {
-    type Level = Serializable;
     type Error = ();
 
     async fn run(&self, _oper: &Read) -> Result<(), ()> {
@@ -30,12 +33,33 @@ impl Run<Read> for Repo {
 }
 
 impl Step<Read, Context> for Repo {
+    type Level = RepeatableRead;
     type Error = ();
 
     async fn step(&self, _context: &mut Context, _oper: &Read) -> Result<(), ()> {
         Ok(())
     }
 }
+
+impl Step<Write, Context> for Repo {
+    type Level = Serializable;
+    type Error = ();
+
+    async fn step(&self, _context: &mut Context, _oper: &Write) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "macro")]
+#[poprako_orchestra::drive(
+    context = Context,
+    error = (),
+    step(Read, Write),
+)]
+trait MixedLevelDriver {}
+
+#[cfg(feature = "macro")]
+fn assert_mixed_level_driver<D: MixedLevelDriver>() {}
 
 struct Backend;
 impl Nucl for Backend {
@@ -55,27 +79,32 @@ impl Nucl for Backend {
 
 fn assert_proxy<P>(_proxy: &P)
 where
-    P: Proxy<Read, Level = Serializable, Error = ()>,
+    P: Proxy<Read, Error = ()>,
 {
 }
 
 #[test]
-fn stronger_level_satisfies_every_execution_path() {
+fn run_has_no_level_and_steps_can_require_different_levels() {
     fn assert_nucl<N: Nucl<Level = Serializable, Context = Context>>() {}
     assert_nucl::<Backend>();
 
+    #[cfg(feature = "macro")]
+    assert_mixed_level_driver::<Repo>();
+
     let repo = &Repo;
-    let run_proxy = poprako_orchestra::run_proxy! {
-        repo => Read;
-    };
-    assert_proxy(&run_proxy);
-    drop(run_proxy);
+    {
+        let run_proxy = poprako_orchestra::run_proxy! {
+            repo => Read;
+        };
+        assert_proxy(&run_proxy);
+    }
 
     let mut context = Context;
-    let step_proxy = poprako_orchestra::step_proxy! {
-        &mut context;
-        repo => Read;
-    };
-    assert_proxy(&step_proxy);
-    drop(step_proxy);
+    {
+        let step_proxy = poprako_orchestra::step_proxy! {
+            &mut context;
+            repo => Read, Write;
+        };
+        assert_proxy(&step_proxy);
+    }
 }

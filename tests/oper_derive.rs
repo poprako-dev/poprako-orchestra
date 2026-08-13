@@ -9,13 +9,13 @@ struct Transactional;
 impl Level for Transactional {}
 
 #[derive(Oper)]
-#[oper(level = Transactional, output = Option<String>)]
+#[oper(output = Option<String>)]
 struct ExistAvatar<'a> {
     id: &'a str,
 }
 
 #[derive(Oper)]
-#[oper(output = T, level = Transactional)]
+#[oper(output = T)]
 struct GenericOper<'a, T>
 where
     T: std::fmt::Debug + 'a,
@@ -24,13 +24,13 @@ where
 }
 
 #[derive(Oper)]
-#[oper(level = Transactional, output = T)]
+#[oper(output = T)]
 struct FindUser<T> {
     _payload: T,
 }
 
 #[derive(Oper)]
-#[oper(output = T, level = Transactional)]
+#[oper(output = T)]
 struct UpdateUser<'a, 'b, T> {
     marker: PhantomData<(&'a (), &'b (), T)>,
 }
@@ -52,7 +52,6 @@ struct TestError;
 struct Repo;
 
 impl Run<ExistAvatar<'_>> for Repo {
-    type Level = Transactional;
     type Error = TestError;
 
     async fn run(&self, _oper: &ExistAvatar<'_>) -> Result<Option<String>, Self::Error> {
@@ -64,7 +63,6 @@ impl<T> Run<FindUser<T>> for Repo
 where
     T: Sync,
 {
-    type Level = Transactional;
     type Error = TestError;
 
     async fn run(&self, _oper: &FindUser<T>) -> Result<T, Self::Error> {
@@ -78,6 +76,7 @@ where
     C::Level: poprako_orchestra::AtLeast<Transactional>,
     T: Sync,
 {
+    type Level = Transactional;
     type Error = TestError;
 
     async fn step(

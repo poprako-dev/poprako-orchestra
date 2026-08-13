@@ -7,13 +7,13 @@ struct Transactional;
 impl Level for Transactional {}
 
 #[derive(Oper)]
-#[oper(output = T, level = Transactional)]
+#[oper(output = T)]
 struct FindUser<T, const N: usize> {
     _payload: T,
 }
 
 #[derive(Oper)]
-#[oper(level = Transactional, output = T)]
+#[oper(output = T)]
 struct UpdateUser<'a, 'b, T, const N: usize> {
     marker: PhantomData<(&'a (), &'b (), T)>,
 }
@@ -38,7 +38,6 @@ impl<T, const N: usize> Run<FindUser<T, N>> for Repo
 where
     T: Sync,
 {
-    type Level = Transactional;
     type Error = Error;
 
     async fn run(&self, _oper: &FindUser<T, N>) -> Result<T, Self::Error> {
@@ -52,6 +51,7 @@ where
     C::Level: AtLeast<Transactional>,
     T: Sync,
 {
+    type Level = Transactional;
     type Error = Error;
 
     async fn step(

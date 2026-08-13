@@ -8,15 +8,15 @@ A unified transaction abstraction framework for Rust with compile-time transacti
 
 | Trait  | Role                        | Module              |
 |--------|-----------------------------| ------------------- |
-| `Oper` | **What** — the operation's input, output, and minimum level | [`oper`] |
-| `Step` | **How** — async executor running inside a transaction | [`step`] |
+| `Oper` | **What** — the operation's input and output | [`oper`] |
+| `Step` | **How** — transactional executor declaring its required level | [`step`] |
 | `Nucl` | **Where** — backend providing a scoped context and actual level | [`nucl`] |
 
 Plus a non-transactional variant:
 
 | Trait  | Role                        | Module              |
 |--------|-----------------------------| ------------------- |
-| `Run`  | **How (self-contained)** — executor declaring its actual guarantee | [`step`] |
+| `Run`  | **How (self-contained)** — non-transactional executor | [`step`] |
 
 Transaction levels are application-defined marker types. `AtLeast<Required>`
 expresses compatibility, while `Scope` associates a context with the level it
@@ -48,13 +48,13 @@ pub struct CreateUser {
 
 impl Oper for CreateUser {
     type Output = u64; // user id
-    type Level = RepeatableRead;
 }
 
 // 2. Implement how to execute it
 struct UserRepo;
 
 impl Step<CreateUser, DbConn> for UserRepo {
+    type Level = RepeatableRead;
     type Error = db::Error;
 
     async fn step(&self, cx: &mut DbConn, oper: &CreateUser) -> Result<u64, Self::Error> {
@@ -78,8 +78,8 @@ async fn create_user(
 }
 ```
 
-With the `macro` feature, operations use both required fields (in either
-order): `#[oper(output = u64, level = RepeatableRead)]`.
+With the `macro` feature, operations declare only their output:
+`#[oper(output = u64)]`.
 
 ## Why separate Oper from Step?
 

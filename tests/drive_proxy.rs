@@ -19,13 +19,13 @@ impl Scope for Context {
 // --- Concrete-context case: one oper list drives the generated proxy trait ---
 
 #[derive(Oper)]
-#[oper(output = (), level = Transactional)]
+#[oper(output = ())]
 struct EnsureCustomer<'a> {
     customer_id: &'a str,
 }
 
 #[derive(Oper)]
-#[oper(output = u64, level = Transactional)]
+#[oper(output = u64)]
 struct CreateOrder<'a> {
     customer_id: &'a str,
     quantity: u32,
@@ -45,7 +45,6 @@ trait OrderRepo {}
 struct Repo;
 
 impl Run<EnsureCustomer<'_>> for Repo {
-    type Level = Transactional;
     type Error = String;
 
     async fn run(&self, oper: &EnsureCustomer<'_>) -> Result<(), Self::Error> {
@@ -58,7 +57,6 @@ impl Run<EnsureCustomer<'_>> for Repo {
 }
 
 impl Run<CreateOrder<'_>> for Repo {
-    type Level = Transactional;
     type Error = String;
 
     async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
@@ -67,6 +65,7 @@ impl Run<CreateOrder<'_>> for Repo {
 }
 
 impl Step<EnsureCustomer<'_>, Context> for Repo {
+    type Level = Transactional;
     type Error = String;
 
     async fn step(
@@ -83,6 +82,7 @@ impl Step<EnsureCustomer<'_>, Context> for Repo {
 }
 
 impl Step<CreateOrder<'_>, Context> for Repo {
+    type Level = Transactional;
     type Error = String;
 
     async fn step(
@@ -132,13 +132,13 @@ fn generated_proxy_trait_unifies_run_and_step_oper_lists() {
 // --- Generic-context case: the proxy trait drops the `context` type param ---
 
 #[derive(Oper)]
-#[oper(output = T, level = Transactional)]
+#[oper(output = T)]
 struct FindUser<T, const N: usize> {
     _payload: PhantomData<T>,
 }
 
 #[derive(Oper)]
-#[oper(output = T, level = Transactional)]
+#[oper(output = T)]
 struct UpdateUser<'a, 'b, T, const N: usize> {
     _marker: PhantomData<(&'a (), &'b (), T)>,
 }
@@ -166,7 +166,6 @@ impl<T, const N: usize> Run<FindUser<T, N>> for GenericRepo
 where
     T: Sync,
 {
-    type Level = Transactional;
     type Error = TestError;
 
     async fn run(&self, _oper: &FindUser<T, N>) -> Result<T, Self::Error> {
@@ -180,6 +179,7 @@ where
     C::Level: AtLeast<Transactional>,
     T: Sync,
 {
+    type Level = Transactional;
     type Error = TestError;
 
     async fn step(
@@ -203,7 +203,6 @@ where
 struct DummyProxy;
 
 impl Proxy<FindUser<String, 1>> for DummyProxy {
-    type Level = Transactional;
     type Error = TestError;
 
     async fn exec(&mut self, _oper: &FindUser<String, 1>) -> Result<String, Self::Error> {
@@ -212,13 +211,9 @@ impl Proxy<FindUser<String, 1>> for DummyProxy {
 }
 
 impl<'a, 'b> Proxy<UpdateUser<'a, 'b, String, 1>> for DummyProxy {
-    type Level = Transactional;
     type Error = TestError;
 
-    async fn exec(
-        &mut self,
-        _oper: &UpdateUser<'a, 'b, String, 1>,
-    ) -> Result<String, Self::Error> {
+    async fn exec(&mut self, _oper: &UpdateUser<'a, 'b, String, 1>) -> Result<String, Self::Error> {
         Ok(String::new())
     }
 }

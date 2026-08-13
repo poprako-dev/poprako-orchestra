@@ -171,13 +171,6 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
         bounds.push(syn::parse2(quote!(
             #lifetimes #orchestra::Step<#oper, #context, Error = #error>
         ))?);
-        item.generics
-            .make_where_clause()
-            .predicates
-            .push(syn::parse2(quote!(
-                #lifetimes <#context as #orchestra::Scope>::Level:
-                    #orchestra::AtLeast<<#oper as #orchestra::Oper>::Level>
-            ))?);
     }
 
     item.supertraits.extend(bounds);

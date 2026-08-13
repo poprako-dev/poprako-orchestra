@@ -3,9 +3,9 @@
 use sqlx::{PgPool, Postgres, Transaction};
 
 use poprako_orchestra::OperStep as _;
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -22,14 +22,14 @@ impl Level for Serializable {}
 impl AtLeast<RepeatableRead> for Serializable {}
 
 #[derive(Oper)]
-#[oper(output = (), level = RepeatableRead)]
+#[oper(output = ())]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
 #[derive(Oper)]
-#[oper(level = RepeatableRead, output = ())]
+#[oper(output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
@@ -129,6 +129,7 @@ impl Nucl for PgNucl {
 pub struct PgRepo;
 
 impl Step<DecreaseProduct, PgContext> for PgRepo {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &DecreaseProduct) -> Result<(), RegularError> {
@@ -143,6 +144,7 @@ impl Step<DecreaseProduct, PgContext> for PgRepo {
 }
 
 impl Step<CreateOrder, PgContext> for PgRepo {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &CreateOrder) -> Result<(), RegularError> {
@@ -173,22 +175,26 @@ where
     C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: OrderRepo<C> + Send + Sync,
+    R: OrderRepo<C>
+        + Step<DecreaseProduct, C, Level = RepeatableRead>
+        + Step<CreateOrder, C, Level = RepeatableRead>
+        + Send
+        + Sync,
 {
     match nucl
         .coord(async |cx| {
             DecreaseProduct {
-                    product_id,
-                    quantity,
-                }
+                product_id,
+                quantity,
+            }
             .step_on(repo, cx)
             .await?;
 
             CreateOrder {
-                    user_id,
-                    product_id,
-                    quantity,
-                }
+                user_id,
+                product_id,
+                quantity,
+            }
             .step_on(repo, cx)
             .await?;
 

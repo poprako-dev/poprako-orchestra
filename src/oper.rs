@@ -1,8 +1,8 @@
-//! Defines the [`Oper`] trait — the "what" of a transactional operation.
+//! Defines the [`Oper`] trait — the "what" of an operation.
 //!
-//! An [`Oper`] describes *one atomic unit of work* inside a transaction.  It
-//! carries the input arguments needed to perform that work and declares the
-//! type of value produced as a result.
+//! An [`Oper`] carries the input arguments needed to perform one unit of work
+//! and declares the type of value produced as a result. Transaction semantics
+//! belong to the [`Step`](crate::step::Step) implementation that executes it.
 //!
 //! # Relation to [`Step`](crate::step::Step)
 //!
@@ -18,7 +18,7 @@
 //! command object and [`Step`](crate::step::Step) is the receiver /
 //! handler.
 
-/// A single atomic operation within a transaction.
+/// A single operation.
 ///
 /// Implementors are plain data structs that hold the input parameters
 /// required to perform the operation.  The associated [`Output`](Oper::Output) type
@@ -37,7 +37,7 @@
 /// use poprako_orchestra::Oper;
 ///
 /// #[derive(Oper)]
-/// #[oper(output = (), level = Serializable)]
+/// #[oper(output = ())]
 /// pub struct CreateUser {
 ///     pub name: String,
 ///     pub email: String,
@@ -47,10 +47,7 @@
 /// **Manual:**
 ///
 /// ```
-/// use poprako_orchestra::{Level, Oper};
-///
-/// pub struct Serializable;
-/// impl Level for Serializable {}
+/// use poprako_orchestra::Oper;
 ///
 /// pub struct CreateUser {
 ///     pub name: String,
@@ -59,13 +56,9 @@
 ///
 /// impl Oper for CreateUser {
 ///     type Output = ();
-///     type Level = Serializable;
 /// }
 /// ```
 pub trait Oper {
     /// The type of value produced when this operation succeeds.
     type Output;
-
-    /// The minimum transaction level required by this operation.
-    type Level: crate::Level;
 }

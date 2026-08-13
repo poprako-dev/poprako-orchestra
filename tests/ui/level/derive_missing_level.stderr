@@ -1,7 +1,0 @@
-error: missing `level` in `#[oper(output = Type, level = Level)]`
- --> tests/ui/level/derive_missing_level.rs:3:10
-  |
-3 | #[derive(Oper)]
-  |          ^^^^
-  |
-  = note: this error originates in the derive macro `Oper` (in Nightly builds, run with -Z macro-backtrace for more info)

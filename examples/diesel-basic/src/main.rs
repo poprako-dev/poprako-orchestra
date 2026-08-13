@@ -2,14 +2,14 @@
 
 use diesel_async::RunQueryDsl as _;
 use diesel_async::TransactionManager as _;
-use diesel_async::{AnsiTransactionManager, AsyncPgConnection};
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::{Object, Pool};
+use diesel_async::{AnsiTransactionManager, AsyncPgConnection};
 
 use poprako_orchestra::OperStep as _;
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
+use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -26,14 +26,14 @@ impl Level for Serializable {}
 impl AtLeast<RepeatableRead> for Serializable {}
 
 #[derive(Oper)]
-#[oper(output = (), level = RepeatableRead)]
+#[oper(output = ())]
 pub struct DecreaseProduct {
     pub product_id: i32,
     pub quantity: i32,
 }
 
 #[derive(Oper)]
-#[oper(level = RepeatableRead, output = ())]
+#[oper(output = ())]
 pub struct CreateOrder {
     pub user_id: i32,
     pub product_id: i32,
@@ -137,7 +137,10 @@ impl Nucl for PgNucl {
         T: Send,
         E: Send,
     {
-        let mut conn = self.0.get().await
+        let mut conn = self
+            .0
+            .get()
+            .await
             .map_err(|e| NuclError::Backend(PgBackendError::Pool(e.to_string())))?;
 
         AnsiTransactionManager::begin_transaction(&mut *conn)
@@ -181,6 +184,7 @@ impl PgRepo {
 }
 
 impl Step<DecreaseProduct, PgContext> for PgRepo {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &DecreaseProduct) -> Result<(), RegularError> {
@@ -194,6 +198,7 @@ impl Step<DecreaseProduct, PgContext> for PgRepo {
 }
 
 impl Step<CreateOrder, PgContext> for PgRepo {
+    type Level = RepeatableRead;
     type Error = RegularError;
 
     async fn step(&self, cx: &mut PgContext, oper: &CreateOrder) -> Result<(), RegularError> {
@@ -223,24 +228,30 @@ where
     C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: OrderRepo<C> + Send + Sync,
+    R: OrderRepo<C>
+        + Step<DecreaseProduct, C, Level = RepeatableRead>
+        + Step<CreateOrder, C, Level = RepeatableRead>
+        + Send
+        + Sync,
 {
-    match nucl.coord(async |cx| {
-        DecreaseProduct {
-            product_id,
-            quantity,
-        }
-        .step_on(repo, cx)
-        .await?;
-        CreateOrder {
-            user_id,
-            product_id,
-            quantity,
-        }
-        .step_on(repo, cx)
-        .await?;
-        Ok(())
-    }).await
+    match nucl
+        .coord(async |cx| {
+            DecreaseProduct {
+                product_id,
+                quantity,
+            }
+            .step_on(repo, cx)
+            .await?;
+            CreateOrder {
+                user_id,
+                product_id,
+                quantity,
+            }
+            .step_on(repo, cx)
+            .await?;
+            Ok(())
+        })
+        .await
     {
         Ok(()) => Ok(()),
         Err(NuclError::Backend(e)) => Err(RegularError(Box::new(e))),
@@ -254,8 +265,8 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost:5432/test".into());
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost:5432/test".into());
 
     let config = AsyncDieselConnectionManager::<AsyncPgConnection>::new(database_url);
     let pool = Pool::builder(config).build()?;
