@@ -1,0 +1,5 @@
+error: `run_proxy = ...` requires at least one `run(...)` operation
+  --> tests/ui/drive_proxy_missing_run.rs:10:17
+   |
+10 |     run_proxy = RepoRunProxy,
+   |                 ^^^^^^^^^^^^

@@ -81,6 +81,24 @@ async fn create_user(
 With the `macro` feature, operations declare only their output:
 `#[oper(output = u64)]`.
 
+`#[drive]` can generate separate proxy capability traits for transaction-free
+and transactional operations:
+
+```rust
+#[drive(
+    context = DbConn,
+    error = db::Error,
+    run_proxy = UserRepoRunProxy,
+    step_proxy = UserRepoStepProxy,
+    run(GetUser),
+    step(CreateUser),
+)]
+trait UserRepo {}
+```
+
+`UserRepoRunProxy` contains only `run(...)` operations, while
+`UserRepoStepProxy` contains only `step(...)` operations.
+
 ## Why separate Oper from Step?
 
 - The same `Oper` can be executed by different `Step` implementations in different contexts.

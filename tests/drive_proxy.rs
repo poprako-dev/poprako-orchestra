@@ -16,7 +16,7 @@ impl Scope for Context {
     type Level = Transactional;
 }
 
-// --- Concrete-context case: one oper list drives the generated proxy trait ---
+// --- Concrete-context case: run and step generate separate proxy traits ---
 
 #[derive(Oper)]
 #[oper(output = ())]
@@ -31,14 +31,13 @@ struct CreateOrder<'a> {
     quantity: u32,
 }
 
-// `run(...)` and `step(...)` list the same opers; the macro merges and
-// deduplicates them into the generated `OrderRepoProxy`.
 #[drive(
     context = Context,
     error = String,
-    proxy = OrderRepoProxy,
-    run(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
-    step(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
+    run_proxy = OrderRepoRunProxy,
+    step_proxy = OrderRepoStepProxy,
+    run(for<'a> EnsureCustomer<'a>),
+    step(for<'a> CreateOrder<'a>),
 )]
 trait OrderRepo {}
 
@@ -48,31 +47,6 @@ impl Run<EnsureCustomer<'_>> for Repo {
     type Error = String;
 
     async fn run(&self, oper: &EnsureCustomer<'_>) -> Result<(), Self::Error> {
-        if oper.customer_id.is_empty() {
-            return Err("customer ID must not be empty".to_owned());
-        }
-
-        Ok(())
-    }
-}
-
-impl Run<CreateOrder<'_>> for Repo {
-    type Error = String;
-
-    async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
-        Ok(oper.customer_id.len() as u64 + oper.quantity as u64)
-    }
-}
-
-impl Step<EnsureCustomer<'_>, Context> for Repo {
-    type Level = Transactional;
-    type Error = String;
-
-    async fn step(
-        &self,
-        _context: &mut Context,
-        oper: &EnsureCustomer<'_>,
-    ) -> Result<(), Self::Error> {
         if oper.customer_id.is_empty() {
             return Err("customer ID must not be empty".to_owned());
         }
@@ -96,33 +70,29 @@ impl Step<CreateOrder<'_>, Context> for Repo {
 
 fn require_repo<R: OrderRepo>() {}
 
-fn require_proxy<P: OrderRepoProxy>(_proxy: &P) {}
+fn require_run_proxy<P: OrderRepoRunProxy>(_proxy: &P) {}
+
+fn require_step_proxy<P: OrderRepoStepProxy>(_proxy: &P) {}
 
 #[test]
-fn generated_proxy_trait_unifies_run_and_step_oper_lists() {
-    // The aggregate repo trait and the generated proxy trait are both satisfied.
+fn generated_proxy_traits_preserve_asymmetric_oper_lists() {
     require_repo::<Repo>();
 
     let repo = &Repo;
 
     let mut run_proxy = run_proxy! {
-        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
+        repo => for<'a> EnsureCustomer<'a>;
     };
-    require_proxy(&run_proxy);
+    require_run_proxy(&run_proxy);
     drop(run_proxy.exec(&EnsureCustomer { customer_id: "c" }));
-    drop(run_proxy.exec(&CreateOrder {
-        customer_id: "c",
-        quantity: 1,
-    }));
 
     let mut context = Context;
     let context = &mut context;
     let mut step_proxy = step_proxy! {
         context;
-        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
+        repo => for<'a> CreateOrder<'a>;
     };
-    require_proxy(&step_proxy);
-    drop(step_proxy.exec(&EnsureCustomer { customer_id: "c" }));
+    require_step_proxy(&step_proxy);
     drop(step_proxy.exec(&CreateOrder {
         customer_id: "c",
         quantity: 1,
@@ -145,12 +115,12 @@ struct UpdateUser<'a, 'b, T, const N: usize> {
 
 struct TestError;
 
-// `UserRepo<C, T, N>` drives both `UserRepoProxy<T, N>` — `C` (the context) is
-// not a generic parameter of the generated proxy trait.
+// Both proxy traits drop `C`, while retaining only their own operation sets.
 #[drive(
     context = C,
     error = TestError,
-    proxy = UserRepoProxy,
+    run_proxy = UserRepoRunProxy,
+    step_proxy = UserRepoStepProxy,
     run(FindUser<T, N>),
     step(for<'a, 'b> UpdateUser<'a, 'b, T, N>),
 )]
@@ -218,15 +188,15 @@ impl<'a, 'b> Proxy<UpdateUser<'a, 'b, String, 1>> for DummyProxy {
     }
 }
 
-fn assert_user_proxy<T, const N: usize>()
+fn assert_user_proxies<T, const N: usize>()
 where
     T: Send + Sync,
-    DummyProxy: UserRepoProxy<T, N>,
+    DummyProxy: UserRepoRunProxy<T, N> + UserRepoStepProxy<T, N>,
 {
 }
 
 #[test]
 fn generic_context_proxy_trait_drops_context_param() {
     assert_user_repo::<Context, String, 1>();
-    assert_user_proxy::<String, 1>();
+    assert_user_proxies::<String, 1>();
 }

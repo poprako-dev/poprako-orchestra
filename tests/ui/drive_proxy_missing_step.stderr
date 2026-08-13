@@ -1,0 +1,5 @@
+error: `step_proxy = ...` requires at least one `step(...)` operation
+ --> tests/ui/drive_proxy_missing_step.rs:9:18
+  |
+9 |     step_proxy = RepoStepProxy,
+  |                  ^^^^^^^^^^^^^

@@ -25,7 +25,8 @@ struct Error;
 #[drive(
     context = C,
     error = Error,
-    proxy = UserRepoProxy,
+    run_proxy = UserRepoRunProxy,
+    step_proxy = UserRepoStepProxy,
     run(FindUser<T, N>),
     step(for<'a, 'b> UpdateUser<'a, 'b, T, N>),
 )]
@@ -75,8 +76,8 @@ where
 {
 }
 
-// A proxy type needs only the merged `Proxy` bounds to satisfy the generated
-// `UserRepoProxy<T, N>`; `C` is absent from the proxy trait's generics.
+// Each generated proxy trait carries only its matching operation set; `C` is
+// absent from both proxy traits' generics.
 struct ProxyImpl;
 
 impl<T, const N: usize> Proxy<FindUser<T, N>> for ProxyImpl
@@ -104,10 +105,10 @@ where
     }
 }
 
-fn assert_user_proxy<T, const N: usize>()
+fn assert_user_proxies<T, const N: usize>()
 where
     T: Send + Sync,
-    ProxyImpl: UserRepoProxy<T, N>,
+    ProxyImpl: UserRepoRunProxy<T, N> + UserRepoStepProxy<T, N>,
 {
 }
 
@@ -119,5 +120,5 @@ impl Scope for Context {
 
 fn main() {
     assert_user_repo::<Context, String, 1>();
-    assert_user_proxy::<String, 1>();
+    assert_user_proxies::<String, 1>();
 }
