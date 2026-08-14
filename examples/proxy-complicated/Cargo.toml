@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 poprako-orchestra = { path = "../..", features = ["macro", "oper_ext"] }
+futures = "0.3"

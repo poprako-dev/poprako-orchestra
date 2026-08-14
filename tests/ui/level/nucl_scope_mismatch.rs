@@ -1,5 +1,5 @@
 use poprako_orchestra::nucl::{Nucl, NuclError};
-use poprako_orchestra::{Level, Scope};
+use poprako_orchestra::{Level, Context};
 
 struct Weak;
 impl Level for Weak {}
@@ -7,8 +7,8 @@ impl Level for Weak {}
 struct Strong;
 impl Level for Strong {}
 
-struct Context;
-impl Scope for Context {
+struct Cx;
+impl Context for Cx {
     type Level = Weak;
 }
 
@@ -16,11 +16,11 @@ struct Backend;
 impl Nucl for Backend {
     type Level = Strong;
     type Error = ();
-    type Context = Context;
+    type Context = Cx;
 
     async fn coord<F, T, E>(&self, _f: F) -> Result<T, NuclError<(), E>>
     where
-        F: for<'cx> AsyncFnOnce(&'cx mut Context) -> Result<T, E> + Send,
+        F: for<'cx> AsyncFnOnce(&'cx mut Cx) -> Result<T, E> + Send,
         T: Send,
         E: Send,
     {

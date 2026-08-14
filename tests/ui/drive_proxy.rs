@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use poprako_orchestra::{
-    AtLeast, Level, Oper, Proxy, Run, Scope, Step, drive,
+    AtLeast, Level, Oper, Proxy, Run, Context, Step, drive,
 };
 
 struct Transactional;
@@ -22,11 +22,12 @@ struct UpdateUser<'a, 'b, T, const N: usize> {
 
 struct Error;
 
+// One proxy trait merges the run and step operation sets; `C` is absent from
+// its generics.
 #[drive(
     context = C,
     error = Error,
-    run_proxy = UserRepoRunProxy,
-    step_proxy = UserRepoStepProxy,
+    proxy = UserRepoProxy,
     run(FindUser<T, N>),
     step(for<'a, 'b> UpdateUser<'a, 'b, T, N>),
 )]
@@ -51,7 +52,7 @@ where
 
 impl<'a, 'b, C, T, const N: usize> Step<UpdateUser<'a, 'b, T, N>, C> for Repo
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Sync,
 {
@@ -69,15 +70,13 @@ where
 
 fn assert_user_repo<C, T, const N: usize>()
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Send + Sync,
     Repo: UserRepo<C, T, N>,
 {
 }
 
-// Each generated proxy trait carries only its matching operation set; `C` is
-// absent from both proxy traits' generics.
 struct ProxyImpl;
 
 impl<T, const N: usize> Proxy<FindUser<T, N>> for ProxyImpl
@@ -105,20 +104,20 @@ where
     }
 }
 
-fn assert_user_proxies<T, const N: usize>()
+fn assert_user_proxy<T, const N: usize>()
 where
     T: Send + Sync,
-    ProxyImpl: UserRepoRunProxy<T, N> + UserRepoStepProxy<T, N>,
+    ProxyImpl: UserRepoProxy<T, N>,
 {
 }
 
-struct Context;
+struct Cx;
 
-impl Scope for Context {
+impl Context for Cx {
     type Level = Transactional;
 }
 
 fn main() {
-    assert_user_repo::<Context, String, 1>();
-    assert_user_proxies::<String, 1>();
+    assert_user_repo::<Cx, String, 1>();
+    assert_user_proxy::<String, 1>();
 }

@@ -469,9 +469,9 @@ macro_rules! step_proxy {
                 $($all_repo),+
             >
         where
-            $context_ty: $crate::Scope,
+            $context_ty: $crate::Context,
             $repo: $crate::Step<$oper, $context_ty>,
-            <$context_ty as $crate::Scope>::Level: $crate::AtLeast<
+            <$context_ty as $crate::Context>::Level: $crate::AtLeast<
                 <$repo as $crate::Step<$oper, $context_ty>>::Level
             >,
         {
@@ -520,9 +520,9 @@ macro_rules! step_proxy {
                 $($all_repo),+
             >
         where
-            $context_ty: $crate::Scope,
+            $context_ty: $crate::Context,
             $repo: $crate::Step<$oper, $context_ty>,
-            <$context_ty as $crate::Scope>::Level: $crate::AtLeast<
+            <$context_ty as $crate::Context>::Level: $crate::AtLeast<
                 <$repo as $crate::Step<$oper, $context_ty>>::Level
             >,
         {
@@ -552,13 +552,13 @@ macro_rules! step_proxy {
 mod tests {
     use super::*;
 
-    use crate::{Level, Run, Scope, Step};
+    use crate::{Context, Level, Run, Step};
 
     pub struct Transactional;
 
     impl Level for Transactional {}
 
-    impl Scope for () {
+    impl Context for () {
         type Level = Transactional;
     }
 

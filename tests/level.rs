@@ -1,5 +1,5 @@
 use poprako_orchestra::nucl::{Nucl, NuclError};
-use poprako_orchestra::{AtLeast, Level, Oper, Proxy, Run, Scope, Step};
+use poprako_orchestra::{AtLeast, Context, Level, Oper, Proxy, Run, Step};
 
 struct RepeatableRead;
 impl Level for RepeatableRead {}
@@ -8,8 +8,8 @@ struct Serializable;
 impl Level for Serializable {}
 impl AtLeast<RepeatableRead> for Serializable {}
 
-struct Context;
-impl Scope for Context {
+struct Cx;
+impl Context for Cx {
     type Level = Serializable;
 }
 
@@ -32,27 +32,27 @@ impl Run<Read> for Repo {
     }
 }
 
-impl Step<Read, Context> for Repo {
+impl Step<Read, Cx> for Repo {
     type Level = RepeatableRead;
     type Error = ();
 
-    async fn step(&self, _context: &mut Context, _oper: &Read) -> Result<(), ()> {
+    async fn step(&self, _context: &mut Cx, _oper: &Read) -> Result<(), ()> {
         Ok(())
     }
 }
 
-impl Step<Write, Context> for Repo {
+impl Step<Write, Cx> for Repo {
     type Level = Serializable;
     type Error = ();
 
-    async fn step(&self, _context: &mut Context, _oper: &Write) -> Result<(), ()> {
+    async fn step(&self, _context: &mut Cx, _oper: &Write) -> Result<(), ()> {
         Ok(())
     }
 }
 
 #[cfg(feature = "macro")]
 #[poprako_orchestra::drive(
-    context = Context,
+    context = Cx,
     error = (),
     step(Read, Write),
 )]
@@ -65,11 +65,11 @@ struct Backend;
 impl Nucl for Backend {
     type Level = Serializable;
     type Error = ();
-    type Context = Context;
+    type Context = Cx;
 
     async fn coord<F, T, E>(&self, _f: F) -> Result<T, NuclError<(), E>>
     where
-        F: for<'cx> AsyncFnOnce(&'cx mut Context) -> Result<T, E> + Send,
+        F: for<'cx> AsyncFnOnce(&'cx mut Cx) -> Result<T, E> + Send,
         T: Send,
         E: Send,
     {
@@ -85,7 +85,7 @@ where
 
 #[test]
 fn run_has_no_level_and_steps_can_require_different_levels() {
-    fn assert_nucl<N: Nucl<Level = Serializable, Context = Context>>() {}
+    fn assert_nucl<N: Nucl<Level = Serializable, Context = Cx>>() {}
     assert_nucl::<Backend>();
 
     #[cfg(feature = "macro")]
@@ -99,7 +99,7 @@ fn run_has_no_level_and_steps_can_require_different_levels() {
         assert_proxy(&run_proxy);
     }
 
-    let mut context = Context;
+    let mut context = Cx;
     {
         let step_proxy = poprako_orchestra::step_proxy! {
             &mut context;

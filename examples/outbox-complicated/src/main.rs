@@ -1,11 +1,13 @@
 //! # Outbox-Complicated — poprako-orchestra with sqlx
 //!
-//! Demonstrates a mixed usecase that blends non-transactional checks with
-//! transactional steps and post-commit side effects:
-//!
-//! 1. [`Run`] — check user existence and retrieve the current avatar OSS key
-//!    (outside the transaction).
-//! 2. [`Step`] — clear the `avatar_url` column inside a transaction.
+//! Demonstrates a usecase that runs a non-transactional check **before** the
+//! transaction, then performs transactional steps inside a single nucleus
+//! transaction:
+
+//! 1. [`Run`] — check user existence and retrieve the current avatar OSS key.
+//!    A `Run` needs no context and executes against the pool, outside any
+//!    transaction; its result decides whether to begin one at all.
+//! 2. [`Step`] — clear the `avatar_url` column inside the transaction.
 //! 3. [`Step`] — insert an outbox event in the same transaction so a
 //!    downstream consumer can clean up the OSS resource after commit.
 
@@ -15,7 +17,7 @@ use poprako_orchestra::OperRun as _;
 use poprako_orchestra::OperStep as _;
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::{Run, Step};
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
+use poprako_orchestra::{AtLeast, Level, Oper, Context, drive};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -36,8 +38,8 @@ impl Level for Serializable {}
 impl AtLeast<RepeatableRead> for Serializable {}
 
 /// Check whether the user exists and return the current avatar OSS key (if
-/// any).  Executed **outside** the transaction so a non-existent user is
-/// caught before any writes begin.
+/// any). A [`Run`] operation executes against the pool, outside any
+/// transaction; its result decides whether the usecase opens a transaction.
 ///
 /// `None`            — user not found (caller should short-circuit).
 /// `Some(Some(key))` — user exists **and** has an avatar to clean up.
@@ -116,7 +118,7 @@ pub trait OutboxRepo<C> {}
 
 pub struct PgContext(Transaction<'static, Postgres>);
 
-impl Scope for PgContext {
+impl Context for PgContext {
     type Level = Serializable;
 }
 
@@ -234,17 +236,22 @@ async fn delete_avatar_usecase<C, N, R1, R2>(
     key: &str,
 ) -> Result<(), RegularError>
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R1: UserRepo<C> + for<'a> Step<DeleteAvatar<'a>, C, Level = RepeatableRead> + Send + Sync,
-    R2: OutboxRepo<C> + for<'a> Step<CleanOssImage<'a>, C, Level = RepeatableRead> + Send + Sync,
+    R1: UserRepo<C> + Send + Sync,
+    R2: OutboxRepo<C> + Send + Sync,
 {
-    // ── Step 1: check existence + get avatar key (outside tx) ──
-    let _ = ExistAvatar { id }.run_on(user_repo).await?;
+    // ── Non-transactional check: a `Run` needs no context and runs against
+    //    the pool, outside any transaction. Its result decides whether we
+    //    open a transaction at all. ──
+    let avatar_key = ExistAvatar { id }.run_on(user_repo).await?;
+    let Some(_key) = avatar_key.as_deref() else {
+        return Ok(()); // nothing to clean up → no transaction needed
+    };
 
-    // ── Step 2: clear avatar_url + insert outbox entry (inside tx) ──
+    // ── Transactional steps: clear avatar_url + insert outbox entry ──
     match nucl
         .coord(async |cx| {
             DeleteAvatar { id }.step_on(user_repo, cx).await?;

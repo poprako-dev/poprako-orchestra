@@ -3,20 +3,20 @@
 use std::marker::PhantomData;
 
 use poprako_orchestra::{
-    AtLeast, Level, Oper, Proxy, Run, Scope, Step, drive, run_proxy, step_proxy,
+    AtLeast, Context, Level, Oper, Proxy, Run, Step, drive, run_proxy, step_proxy,
 };
 
 struct Transactional;
 
 impl Level for Transactional {}
 
-struct Context;
+struct Cx;
 
-impl Scope for Context {
+impl Context for Cx {
     type Level = Transactional;
 }
 
-// --- Concrete-context case: run and step generate separate proxy traits ---
+// --- Concrete-context case: one proxy capability, two transaction wirings ---
 
 #[derive(Oper)]
 #[oper(output = ())]
@@ -31,13 +31,14 @@ struct CreateOrder<'a> {
     quantity: u32,
 }
 
+// One capability trait merges both operation lists. Complex logic depends on
+// this single name and never learns whether an operation is run or stepped.
 #[drive(
-    context = Context,
+    context = Cx,
     error = String,
-    run_proxy = OrderRepoRunProxy,
-    step_proxy = OrderRepoStepProxy,
-    run(for<'a> EnsureCustomer<'a>),
-    step(for<'a> CreateOrder<'a>),
+    proxy = OrderRepoProxy,
+    run(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
+    step(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
 )]
 trait OrderRepo {}
 
@@ -55,44 +56,68 @@ impl Run<EnsureCustomer<'_>> for Repo {
     }
 }
 
-impl Step<CreateOrder<'_>, Context> for Repo {
+impl Run<CreateOrder<'_>> for Repo {
+    type Error = String;
+
+    async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
+        Ok(oper.customer_id.len() as u64 + oper.quantity as u64)
+    }
+}
+
+impl Step<EnsureCustomer<'_>, Cx> for Repo {
     type Level = Transactional;
     type Error = String;
 
-    async fn step(
-        &self,
-        _context: &mut Context,
-        oper: &CreateOrder<'_>,
-    ) -> Result<u64, Self::Error> {
+    async fn step(&self, _context: &mut Cx, _oper: &EnsureCustomer<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl Step<CreateOrder<'_>, Cx> for Repo {
+    type Level = Transactional;
+    type Error = String;
+
+    async fn step(&self, _context: &mut Cx, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
         Ok(oper.customer_id.len() as u64 + oper.quantity as u64)
     }
 }
 
 fn require_repo<R: OrderRepo>() {}
 
-fn require_run_proxy<P: OrderRepoRunProxy>(_proxy: &P) {}
+fn require_proxy<P: OrderRepoProxy>(_proxy: &P) {}
 
-fn require_step_proxy<P: OrderRepoStepProxy>(_proxy: &P) {}
+// Complex: one capability name — no Run/Step/Context/Level anywhere.
+fn place<P: OrderRepoProxy>(_proxy: &mut P) {}
 
 #[test]
-fn generated_proxy_traits_preserve_asymmetric_oper_lists() {
+fn one_proxy_capability_satisfied_by_both_transaction_wirings() {
     require_repo::<Repo>();
 
     let repo = &Repo;
 
+    // Run wiring: every operation executes non-transactionally.
     let mut run_proxy = run_proxy! {
-        repo => for<'a> EnsureCustomer<'a>;
+        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
     };
-    require_run_proxy(&run_proxy);
+    require_proxy(&run_proxy);
+    place(&mut run_proxy);
     drop(run_proxy.exec(&EnsureCustomer { customer_id: "c" }));
+    drop(run_proxy.exec(&CreateOrder {
+        customer_id: "c",
+        quantity: 1,
+    }));
 
-    let mut context = Context;
+    // Step wiring: the same operations execute inside one shared transaction
+    // context. The capability trait cannot tell the two wirings apart.
+    let mut context = Cx;
     let context = &mut context;
     let mut step_proxy = step_proxy! {
         context;
-        repo => for<'a> CreateOrder<'a>;
+        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
     };
-    require_step_proxy(&step_proxy);
+    require_proxy(&step_proxy);
+    place(&mut step_proxy);
+    drop(step_proxy.exec(&EnsureCustomer { customer_id: "c" }));
     drop(step_proxy.exec(&CreateOrder {
         customer_id: "c",
         quantity: 1,
@@ -115,12 +140,11 @@ struct UpdateUser<'a, 'b, T, const N: usize> {
 
 struct TestError;
 
-// Both proxy traits drop `C`, while retaining only their own operation sets.
+// The proxy trait drops `C` and merges the run and step operation sets.
 #[drive(
     context = C,
     error = TestError,
-    run_proxy = UserRepoRunProxy,
-    step_proxy = UserRepoStepProxy,
+    proxy = UserRepoProxy,
     run(FindUser<T, N>),
     step(for<'a, 'b> UpdateUser<'a, 'b, T, N>),
 )]
@@ -145,7 +169,7 @@ where
 
 impl<'a, 'b, C, T, const N: usize> Step<UpdateUser<'a, 'b, T, N>, C> for GenericRepo
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Sync,
 {
@@ -163,7 +187,7 @@ where
 
 fn assert_user_repo<C, T, const N: usize>()
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Send + Sync,
     GenericRepo: UserRepo<C, T, N>,
@@ -188,15 +212,15 @@ impl<'a, 'b> Proxy<UpdateUser<'a, 'b, String, 1>> for DummyProxy {
     }
 }
 
-fn assert_user_proxies<T, const N: usize>()
+fn assert_user_proxy<T, const N: usize>()
 where
     T: Send + Sync,
-    DummyProxy: UserRepoRunProxy<T, N> + UserRepoStepProxy<T, N>,
+    DummyProxy: UserRepoProxy<T, N>,
 {
 }
 
 #[test]
 fn generic_context_proxy_trait_drops_context_param() {
-    assert_user_repo::<Context, String, 1>();
-    assert_user_proxies::<String, 1>();
+    assert_user_repo::<Cx, String, 1>();
+    assert_user_proxy::<String, 1>();
 }

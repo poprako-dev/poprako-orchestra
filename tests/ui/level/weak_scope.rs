@@ -1,4 +1,4 @@
-use poprako_orchestra::{Level, Oper, Scope, Step};
+use poprako_orchestra::{Level, Oper, Context, Step};
 
 struct Weak;
 impl Level for Weak {}
@@ -6,8 +6,8 @@ impl Level for Weak {}
 struct Strong;
 impl Level for Strong {}
 
-struct Context;
-impl Scope for Context {
+struct Cx;
+impl Context for Cx {
     type Level = Weak;
 }
 
@@ -17,18 +17,18 @@ impl Oper for StrongOper {
 }
 
 struct Repo;
-impl Step<StrongOper, Context> for Repo {
+impl Step<StrongOper, Cx> for Repo {
     type Level = Strong;
     type Error = ();
 
-    async fn step(&self, _context: &mut Context, _oper: &StrongOper) -> Result<(), ()> {
+    async fn step(&self, _context: &mut Cx, _oper: &StrongOper) -> Result<(), ()> {
         Ok(())
     }
 }
 
 fn main() {
     let repo = Repo;
-    let mut context = Context;
+    let mut context = Cx;
     let oper = StrongOper;
     let _ = repo.step(&mut context, &oper);
 }

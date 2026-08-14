@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use poprako_orchestra::{AtLeast, Level, Oper, Run, Scope, Step, drive};
+use poprako_orchestra::{AtLeast, Level, Oper, Run, Context, Step, drive};
 
 struct Transactional;
 
@@ -47,7 +47,7 @@ where
 
 impl<'a, 'b, C, T, const N: usize> Step<UpdateUser<'a, 'b, T, N>, C> for Repo
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Sync,
 {
@@ -65,19 +65,19 @@ where
 
 fn assert_user_repo<C, T, const N: usize>()
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<Transactional>,
     T: Send + Sync,
     Repo: UserRepo<C, T, N>,
 {
 }
 
-struct Context;
+struct Cx;
 
-impl Scope for Context {
+impl Context for Cx {
     type Level = Transactional;
 }
 
 fn main() {
-    assert_user_repo::<Context, String, 1>();
+    assert_user_repo::<Cx, String, 1>();
 }

@@ -1,0 +1,19 @@
+error[E0271]: type mismatch resolving `<RrCx as Context>::Level == Serializable`
+  --> tests/ui/level/drive_level_weak_nucl.rs:47:15
+   |
+47 |     usecase::<RrCx, Repo>();
+   |               ^^^^ type mismatch resolving `<RrCx as Context>::Level == Serializable`
+   |
+note: expected this to be `Serializable`
+  --> tests/ui/level/drive_level_weak_nucl.rs:43:18
+   |
+43 |     type Level = RepeatableRead;
+   |                  ^^^^^^^^^^^^^^
+note: required by a bound in `usecase`
+  --> tests/ui/level/drive_level_weak_nucl.rs:35:16
+   |
+33 | fn usecase<C, R>()
+   |    ------- required by a bound in this function
+34 | where
+35 |     C: Context<Level = Serializable>,
+   |                ^^^^^^^^^^^^^^^^^^^^ required by this bound in `usecase`

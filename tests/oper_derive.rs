@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use poprako_orchestra::{Level, Oper, Run, Scope, Step, drive};
+use poprako_orchestra::{Context, Level, Oper, Run, Step, drive};
 
 struct Transactional;
 
@@ -72,7 +72,7 @@ where
 
 impl<'a, 'b, C, T> Step<UpdateUser<'a, 'b, T>, C> for Repo
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: poprako_orchestra::AtLeast<Transactional>,
     T: Sync,
 {
@@ -106,13 +106,13 @@ fn derives_oper_for_plain_and_generic_structs() {
 fn assert_user_repo<C, T>()
 where
     T: std::fmt::Debug + Send + Sync,
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: poprako_orchestra::AtLeast<Transactional>,
 {
     fn assert_impl<C, T, Repo>()
     where
         T: std::fmt::Debug + Send,
-        C: Scope,
+        C: Context,
         C::Level: poprako_orchestra::AtLeast<Transactional>,
         Repo: UserRepo<C, T>,
     {
@@ -121,13 +121,13 @@ where
     assert_impl::<C, T, Repo>();
 }
 
-struct Context;
+struct Cx;
 
-impl Scope for Context {
+impl Context for Cx {
     type Level = Transactional;
 }
 
 #[test]
 fn derives_aggregate_repo_trait() {
-    assert_user_repo::<Context, String>();
+    assert_user_repo::<Cx, String>();
 }

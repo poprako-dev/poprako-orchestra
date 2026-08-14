@@ -1,0 +1,5 @@
+error: `#[drive]` requires at least one `run(...)` or `step(...)` argument
+  --> tests/ui/drive_proxy_missing.rs:13:7
+   |
+13 | trait UserRepo<C> {}
+   |       ^^^^^^^^

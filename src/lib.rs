@@ -29,7 +29,7 @@ pub mod step;
 
 pub mod proxy;
 
-pub use level::{AtLeast, Level, Scope};
+pub use level::{AtLeast, Context, Level, LevelGuard};
 pub use nucl::Nucl;
 pub use oper::Oper;
 pub use step::{Run, Step};

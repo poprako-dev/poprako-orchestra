@@ -1,5 +1,0 @@
-error: `run_proxy` and `step_proxy` must use different trait names
-  --> tests/ui/drive_proxy_same_name.rs:11:18
-   |
-11 |     step_proxy = RepoProxy,
-   |                  ^^^^^^^^^

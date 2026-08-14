@@ -9,7 +9,7 @@ use diesel_async::{AnsiTransactionManager, AsyncPgConnection};
 use poprako_orchestra::OperStep as _;
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::step::Step;
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, drive};
+use poprako_orchestra::{AtLeast, Level, Oper, Context, drive};
 
 // ---------------------------------------------------------------------------
 // Domain — Oper definitions
@@ -84,7 +84,7 @@ type Conn = Object<AsyncPgConnection>;
 
 pub struct PgContext(Conn);
 
-impl Scope for PgContext {
+impl Context for PgContext {
     type Level = Serializable;
 }
 
@@ -224,15 +224,11 @@ async fn run_order_usecase<C, N, R>(
     quantity: i32,
 ) -> Result<(), RegularError>
 where
-    C: Scope + Send,
+    C: Context + Send,
     C::Level: AtLeast<RepeatableRead>,
     N: Nucl<Context = C>,
     N::Error: std::error::Error + Send + 'static,
-    R: OrderRepo<C>
-        + Step<DecreaseProduct, C, Level = RepeatableRead>
-        + Step<CreateOrder, C, Level = RepeatableRead>
-        + Send
-        + Sync,
+    R: OrderRepo<C> + Send + Sync,
 {
     match nucl
         .coord(async |cx| {

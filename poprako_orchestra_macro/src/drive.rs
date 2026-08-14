@@ -25,8 +25,7 @@ impl Parse for OperSpec {
 struct DriveArgs {
     context: Option<Type>,
     error: Type,
-    run_proxy: Option<Ident>,
-    step_proxy: Option<Ident>,
+    proxy: Option<Ident>,
     runs: Vec<OperSpec>,
     steps: Vec<OperSpec>,
 }
@@ -35,8 +34,7 @@ impl Parse for DriveArgs {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let mut context = None;
         let mut error = None;
-        let mut run_proxy = None;
-        let mut step_proxy = None;
+        let mut proxy = None;
         let mut runs = Vec::new();
         let mut steps = Vec::new();
 
@@ -60,27 +58,13 @@ impl Parse for DriveArgs {
                     input.parse::<Token![=]>()?;
                     error = Some(input.parse()?);
                 }
-                "run_proxy" => {
-                    if run_proxy.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            key,
-                            "duplicate `run_proxy` argument",
-                        ));
+                "proxy" => {
+                    if proxy.is_some() {
+                        return Err(syn::Error::new_spanned(key, "duplicate `proxy` argument"));
                     }
 
                     input.parse::<Token![=]>()?;
-                    run_proxy = Some(input.parse()?);
-                }
-                "step_proxy" => {
-                    if step_proxy.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            key,
-                            "duplicate `step_proxy` argument",
-                        ));
-                    }
-
-                    input.parse::<Token![=]>()?;
-                    step_proxy = Some(input.parse()?);
+                    proxy = Some(input.parse()?);
                 }
                 "run" => {
                     let content;
@@ -114,8 +98,7 @@ impl Parse for DriveArgs {
         Ok(Self {
             context,
             error,
-            run_proxy,
-            step_proxy,
+            proxy,
             runs,
             steps,
         })
@@ -161,61 +144,81 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
         ));
     }
 
-    if args.run_proxy.is_some() && args.runs.is_empty() {
+    if args.proxy.is_some() && args.runs.is_empty() && args.steps.is_empty() {
         return Err(syn::Error::new_spanned(
-            args.run_proxy.as_ref().expect("checked run proxy"),
-            "`run_proxy = ...` requires at least one `run(...)` operation",
-        ));
-    }
-
-    if args.step_proxy.is_some() && args.steps.is_empty() {
-        return Err(syn::Error::new_spanned(
-            args.step_proxy.as_ref().expect("checked step proxy"),
-            "`step_proxy = ...` requires at least one `step(...)` operation",
-        ));
-    }
-
-    if args.run_proxy == args.step_proxy && args.run_proxy.is_some() {
-        return Err(syn::Error::new_spanned(
-            args.step_proxy.as_ref().expect("checked shared proxy name"),
-            "`run_proxy` and `step_proxy` must use different trait names",
+            args.proxy.as_ref().expect("checked proxy"),
+            "`proxy = ...` requires at least one `run(...)` or `step(...)` operation",
         ));
     }
 
     let orchestra = orchestra_path()?;
     let error = &args.error;
-    let mut bounds = Vec::<TypeParamBound>::new();
 
     if !args.steps.is_empty() {
         let context = args.context.as_ref().expect("validated step context");
         item.generics
             .make_where_clause()
             .predicates
-            .push(syn::parse2(quote!(#context: #orchestra::Scope))?);
+            .push(syn::parse2(quote!(#context: #orchestra::Context))?);
     }
+
+    // Trait supertraits use `Self`; the blanket impl mirrors them with the
+    // hidden `__DriveImpl` parameter instead.
+    let mut trait_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
+    let mut impl_bounds = Punctuated::<TypeParamBound, Token![+]>::new();
 
     for spec in &args.runs {
         let lifetimes = &spec.lifetimes;
         let oper = &spec.oper;
-        bounds.push(syn::parse2(quote!(
+        let bound = syn::parse2::<TypeParamBound>(quote!(
             #lifetimes #orchestra::Run<#oper, Error = #error>
-        ))?);
+        ))?;
+        trait_bounds.push(bound.clone());
+        impl_bounds.push(bound);
     }
 
+    // Each step operation declares its own required level: `Step::Level` is
+    // local to one `Step` implementation (per stepper + oper), so the aggregate
+    // trait must not impose a shared level. It hoists every step requirement
+    // into a `LevelGuard` supertrait instead. Supertraits are the one thing
+    // rustc assumes for callers, so a usecase written against `R: Trait<C>`
+    // can invoke any step without repeating per-operation level bounds, while
+    // mismatches still fail at concrete instantiation through the blanket impl.
     for spec in &args.steps {
         let lifetimes = &spec.lifetimes;
         let oper = &spec.oper;
         let context = args.context.as_ref().expect("validated step context");
-        bounds.push(syn::parse2(quote!(
+
+        let step_bound = syn::parse2::<TypeParamBound>(quote!(
             #lifetimes #orchestra::Step<#oper, #context, Error = #error>
+        ))?;
+        trait_bounds.push(step_bound.clone());
+        impl_bounds.push(step_bound);
+
+        trait_bounds.push(syn::parse2(quote!(
+            #lifetimes #orchestra::LevelGuard<
+                <#context as #orchestra::Context>::Level,
+                <Self as #orchestra::Step<#oper, #context>>::Level
+            >
+        ))?);
+        impl_bounds.push(syn::parse2(quote!(
+            #lifetimes #orchestra::LevelGuard<
+                <#context as #orchestra::Context>::Level,
+                <__DriveImpl as #orchestra::Step<#oper, #context>>::Level
+            >
         ))?);
     }
 
-    item.supertraits.extend(bounds);
+    item.supertraits.extend(trait_bounds);
+
+    // The blanket impl must also carry the user-written supertraits (e.g.
+    // `Send`) that the generated bounds do not cover.
+    impl_bounds.extend(original.supertraits.iter().cloned());
 
     let trait_name = &item.ident;
-    let all_bounds = item.supertraits.clone();
-    let (_, trait_generics, _) = item.generics.split_for_impl();
+    let trait_generics_owner = item.generics.clone();
+    let (_, trait_generics, _) = trait_generics_owner.split_for_impl();
+
     let mut impl_generics = item.generics.clone();
     impl_generics
         .params
@@ -223,7 +226,7 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
     impl_generics
         .make_where_clause()
         .predicates
-        .push(syn::parse_quote!(__DriveImpl: #all_bounds));
+        .push(syn::parse_quote!(__DriveImpl: #impl_bounds));
     let (impl_generics, _, where_clause) = impl_generics.split_for_impl();
 
     let main_output = quote! {
@@ -232,19 +235,20 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
         impl #impl_generics #trait_name #trait_generics for __DriveImpl #where_clause {}
     };
 
-    let run_proxy_output = match &args.run_proxy {
-        Some(name) => expand_proxy(&original, &args, name, &args.runs)?,
-        None => quote!(),
-    };
-    let step_proxy_output = match &args.step_proxy {
-        Some(name) => expand_proxy(&original, &args, name, &args.steps)?,
+    // A single proxy trait merges every `run(...)` and `step(...)` operation
+    // into one capability, so complex logic depends on one name and never sees
+    // whether an operation runs transactionally or not.
+    let proxy_output = match &args.proxy {
+        Some(name) => {
+            let combined: Vec<&OperSpec> = args.runs.iter().chain(args.steps.iter()).collect();
+            expand_proxy(&original, &args, name, &combined)?
+        }
         None => quote!(),
     };
 
     Ok(quote! {
         #main_output
-        #run_proxy_output
-        #step_proxy_output
+        #proxy_output
     })
 }
 
@@ -253,12 +257,12 @@ fn expand_proxy(
     original: &ItemTrait,
     args: &DriveArgs,
     proxy_name: &Ident,
-    source_specs: &[OperSpec],
+    source_specs: &[&OperSpec],
 ) -> Result<proc_macro2::TokenStream> {
     let orchestra = orchestra_path()?;
     let error = &args.error;
 
-    let mut specs: Vec<&OperSpec> = Vec::new();
+    let mut specs: Vec<&&OperSpec> = Vec::new();
     for spec in source_specs {
         if !specs.iter().any(|seen| oper_key(seen) == oper_key(spec)) {
             specs.push(spec);
@@ -266,6 +270,8 @@ fn expand_proxy(
     }
 
     // Each operation becomes a `for<...> Proxy<Oper, Error = error>` bound.
+    // The proxy trait carries no context and no level: it erases the
+    // transaction model entirely.
     let mut bounds: Punctuated<TypeParamBound, Token![+]> = Punctuated::new();
     for spec in &specs {
         let lifetimes = &spec.lifetimes;

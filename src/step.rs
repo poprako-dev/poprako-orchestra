@@ -14,19 +14,22 @@
 
 use std::future::Future;
 
-use crate::level::{AtLeast, Level, Scope};
+use crate::level::{Context, Level, LevelGuard};
 use crate::oper::Oper;
 
 /// An async executor that processes an [`Oper`] against a given context.
 ///
 /// * `O` — the [`Oper`] type this step can execute.
-/// * `C` — the context type this step requires.
+/// * `C` — the [`Context`] type this step requires.
 pub trait Step<O, C>
 where
     O: Oper,
-    C: Scope,
+    C: Context,
 {
     /// The minimum transaction level required by this execution strategy.
+    ///
+    /// The level is local to **one** `Step` implementation: the same stepper
+    /// may declare different levels on different operations.
     type Level: Level;
 
     /// Error type that may occur during step execution.
@@ -39,7 +42,7 @@ where
         oper: &O,
     ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send
     where
-        C::Level: AtLeast<Self::Level>;
+        Self: LevelGuard<<C as Context>::Level, Self::Level>;
 }
 
 /// An [`Oper`] extension trait that invokes a [`Step`] from the operation.
@@ -50,20 +53,20 @@ where
 #[cfg(feature = "oper_ext")]
 pub trait OperStep<C>: Oper
 where
-    C: Scope,
+    C: Context,
 {
     /// Executes this operation with `repo` and `cx`.
     ///
     /// This is equivalent to `repo.step(cx, self)`.
-    fn step_on<'a, S>(
+    fn step_on<'a, R>(
         &'a self,
-        repo: &'a S,
+        repo: &'a R,
         cx: &'a mut C,
-    ) -> impl Future<Output = Result<Self::Output, <S as Step<Self, C>>::Error>> + Send + 'a
+    ) -> impl Future<Output = Result<Self::Output, <R as Step<Self, C>>::Error>> + Send + 'a
     where
         Self: Sized,
-        S: Step<Self, C> + ?Sized,
-        C::Level: AtLeast<S::Level>,
+        R: Step<Self, C> + ?Sized,
+        R: LevelGuard<<C as Context>::Level, R::Level>,
     {
         repo.step(cx, self)
     }
@@ -73,7 +76,7 @@ where
 impl<O, C> OperStep<C> for O
 where
     O: Oper,
-    C: Scope,
+    C: Context,
 {
 }
 

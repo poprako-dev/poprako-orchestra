@@ -20,7 +20,7 @@
 use std::future::Future;
 use std::ops::AsyncFnOnce;
 
-use crate::{Level, Scope};
+use crate::{Context, Level};
 
 /// Discriminates between backend-infrastructure failures and step-level
 /// business failures.
@@ -74,7 +74,7 @@ pub trait Nucl {
     type Error;
 
     /// Context type provisioned for each [`coord`](Nucl::coord) call.
-    type Context: Scope<Level = Self::Level>;
+    type Context: Context<Level = Self::Level>;
 
     /// Run an async computation inside the nucleus's managed context.
     ///

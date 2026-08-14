@@ -9,8 +9,9 @@ help: the trait `AtLeast<Strong>` is not implemented for `Weak`
    |
  3 | struct Weak;
    | ^^^^^^^^^^^
+   = note: required for `Repo` to implement `LevelGuard<Weak, Strong>`
 note: required by a bound in `poprako_orchestra::Step::step::{anon_assoc#0}`
   --> src/step.rs
    |
-   |         C::Level: AtLeast<Self::Level>;
-   |                   ^^^^^^^^^^^^^^^^^^^^ required by this bound in `Step::step::{anon_assoc#0}`
+   |         Self: LevelGuard<<C as Context>::Level, Self::Level>;
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Step::step::{anon_assoc#0}`

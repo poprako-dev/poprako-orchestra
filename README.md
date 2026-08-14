@@ -19,14 +19,15 @@ Plus a non-transactional variant:
 | `Run`  | **How (self-contained)** — non-transactional executor | [`step`] |
 
 Transaction levels are application-defined marker types. `AtLeast<Required>`
-expresses compatibility, while `Scope` associates a context with the level it
-actually provides. The framework supplies only the reflexive relationship, so
-stronger levels explicitly declare every weaker level they satisfy.
+expresses compatibility, while `Context` associates an execution context with
+the level it actually provides. The framework supplies only the reflexive
+relationship, so stronger levels explicitly declare every weaker level they
+satisfy.
 
 ## Quick example
 
 ```rust
-use poprako_orchestra::{AtLeast, Level, Oper, Scope, Step};
+use poprako_orchestra::{AtLeast, Level, Oper, Context, Step};
 use poprako_orchestra::nucl::{Nucl, NuclError};
 
 pub struct RepeatableRead;
@@ -37,7 +38,7 @@ impl Level for Serializable {}
 impl AtLeast<RepeatableRead> for Serializable {}
 
 pub struct DbConn;
-impl Scope for DbConn {
+impl Context for DbConn {
     type Level = Serializable;
 }
 
@@ -81,23 +82,69 @@ async fn create_user(
 With the `macro` feature, operations declare only their output:
 `#[oper(output = u64)]`.
 
-`#[drive]` can generate separate proxy capability traits for transaction-free
-and transactional operations:
+`#[drive]` generates **one** proxy capability trait that merges the
+transaction-free and transactional operation lists. The proxy carries no
+context and no level — it erases the transaction model:
 
 ```rust
 #[drive(
     context = DbConn,
     error = db::Error,
-    run_proxy = UserRepoRunProxy,
-    step_proxy = UserRepoStepProxy,
+    proxy = UserRepoProxy,
     run(GetUser),
     step(CreateUser),
 )]
 trait UserRepo {}
 ```
 
-`UserRepoRunProxy` contains only `run(...)` operations, while
-`UserRepoStepProxy` contains only `step(...)` operations.
+Complex logic depends on `P: UserRepoProxy` alone and never learns whether an
+operation is run or stepped; the `run_proxy!` / `step_proxy!` combinators pick
+the wiring at the application layer.
+
+## Transaction levels
+
+Each `Step` implementation declares its own required level, and that level is
+local to **one** implementation — the same stepper may require
+`RepeatableRead` for one operation and `Serializable` for another:
+
+```rust
+impl Step<CreateUser, DbConn> for UserRepo {
+    type Level = RepeatableRead; // this operation only needs repeatable read
+    // ...
+}
+
+impl Step<DeleteUser, DbConn> for UserRepo {
+    type Level = Serializable; // this operation needs serializable
+    // ...
+}
+```
+
+`#[drive]` propagates every step requirement onto the aggregate trait as
+`LevelGuard` supertraits, so a usecase needs only the capability bound plus a
+single business-level declaration — never per-operation `AtLeast` bounds:
+
+```rust
+async fn purge_usecase<C, R>(cx: &mut C, repo: &R) -> Result<(), db::Error>
+where
+    C: Context<Level = Serializable>, // one declaration switches the flow level
+    R: UserRepo<C>,                   // step requirements are implied by drive
+{
+    repo.step(cx, &DeleteUser { id: 1 }).await
+}
+```
+
+Mismatches fail at compile time: a nucleus whose `C::Level` is weaker than a
+step's requirement, or a usecase pinning a level below some step, both refuse
+to compile. The proxy trait carries no level constraints, so complex logic
+stays level-free.
+
+Mechanically, `Step::step` is guarded by
+`Self: LevelGuard<<C as Context>::Level, Self::Level>`, where `LevelGuard` is
+a blanket-implemented marker: it holds for any stepper whose context satisfies
+`C::Level: AtLeast<Step::Level>`. Because the guard is a bound on the stepper
+itself, `#[drive]` can hoist it into the aggregate trait's supertraits — the
+one position rustc assumes for callers — while the underlying `AtLeast`
+relation is still enforced at concrete instantiation.
 
 ## Why separate Oper from Step?
 
