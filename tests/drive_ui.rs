@@ -23,3 +23,11 @@ fn drive_rejects_proxy_without_operations() {
     let tests = trybuild::TestCases::new();
     tests.compile_fail("tests/ui/drive_proxy_missing.rs");
 }
+
+#[test]
+fn proxy_rejects_invalid_capabilities_providers_and_priorities() {
+    let tests = trybuild::TestCases::new();
+    tests.compile_fail("tests/ui/proxy_missing_capability.rs");
+    tests.compile_fail("tests/ui/proxy_wrong_provider.rs");
+    tests.compile_fail("tests/ui/proxy_invalid_priority.rs");
+}

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use poprako_orchestra::nucl::{Nucl, NuclError};
 use poprako_orchestra::{AtLeast, Context, Level, Oper, Proxy, Run, Step};
 
@@ -54,6 +56,8 @@ impl Step<Write, Cx> for Repo {
 #[poprako_orchestra::drive(
     context = Cx,
     error = (),
+    proxy = MixedLevelProxy,
+    run(Read),
     step(Read, Write),
 )]
 trait MixedLevelDriver {}
@@ -91,19 +95,17 @@ fn run_has_no_level_and_steps_can_require_different_levels() {
     #[cfg(feature = "macro")]
     assert_mixed_level_driver::<Repo>();
 
-    let repo = &Repo;
+    #[cfg(feature = "macro")]
     {
-        let run_proxy = poprako_orchestra::run_proxy! {
-            repo => Read;
+        let repo = &Repo;
+        let run_proxy = poprako_orchestra::proxy! {
+            run => repo as MixedLevelProxy;
         };
         assert_proxy(&run_proxy);
-    }
 
-    let mut context = Cx;
-    {
-        let step_proxy = poprako_orchestra::step_proxy! {
-            &mut context;
-            repo => Read, Write;
+        let mut context = Cx;
+        let step_proxy = poprako_orchestra::proxy! {
+            step(&mut context) => repo as MixedLevelProxy;
         };
         assert_proxy(&step_proxy);
     }

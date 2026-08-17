@@ -1,4 +1,5 @@
 #![cfg(feature = "macro")]
+#![allow(dead_code)]
 
 use std::marker::PhantomData;
 
@@ -76,12 +77,8 @@ fn one_proxy_capability_supports_asymmetric_execution_wiring() {
     let repo = &Repo;
     let mut context = Cx;
     let mut proxy = proxy! {
-        run {
-            repo => for<'a> EnsureCustomer<'a>;
-        }
-        step(&mut context) {
-            repo => for<'a> CreateOrder<'a>;
-        }
+        run => repo as OrderRepoProxy;
+        step(&mut context) => repo as OrderRepoProxy;
     };
 
     require_proxy(&proxy);
@@ -192,4 +189,44 @@ where
 fn generic_context_proxy_trait_drops_context_param() {
     assert_user_repo::<Cx, String, 1>();
     assert_user_proxy::<String, 1>();
+}
+
+#[derive(Oper)]
+#[oper(output = ())]
+struct BorrowedGeneric<'a, T, const N: usize> {
+    value: &'a T,
+}
+
+#[drive(
+    error = TestError,
+    proxy = GenericRepoProxy,
+    run(for<'a> BorrowedGeneric<'a, T, N>),
+)]
+trait GenericRepoDrive<T, const N: usize> {}
+
+impl<T, const N: usize> Run<BorrowedGeneric<'_, T, N>> for GenericRepo
+where
+    T: Sync,
+{
+    type Error = TestError;
+
+    async fn run(&self, oper: &BorrowedGeneric<'_, T, N>) -> Result<(), Self::Error> {
+        let _ = oper.value;
+        Ok(())
+    }
+}
+
+fn accept_generic_proxy<T, const N: usize>(repo: &GenericRepo, value: &T)
+where
+    T: Sync,
+{
+    let mut proxy = proxy! {
+        run => repo as GenericRepoProxy;
+    };
+    drop(proxy.exec(&BorrowedGeneric::<T, N> { value }));
+}
+
+#[test]
+fn capability_table_preserves_borrowed_generic_and_const_opers() {
+    accept_generic_proxy::<String, 7>(&GenericRepo, &String::new());
 }

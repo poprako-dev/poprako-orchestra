@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use proc_macro_crate::FoundCrate;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{BoundLifetimes, GenericParam, Ident, ItemTrait, Result, Token, Type, TypeParamBound};
@@ -241,7 +241,12 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
     let proxy_output = match &args.proxy {
         Some(name) => {
             let combined: Vec<&OperSpec> = args.runs.iter().chain(args.steps.iter()).collect();
-            expand_proxy(&original, &args, name, &combined)?
+            let proxy_trait = expand_proxy(&original, &args, name, &combined)?;
+            let capability = expand_capability(&original, &args, name)?;
+            quote! {
+                #proxy_trait
+                #capability
+            }
         }
         None => quote!(),
     };
@@ -249,6 +254,93 @@ fn expand_drive(args: DriveArgs, mut item: ItemTrait) -> Result<proc_macro2::Tok
     Ok(quote! {
         #main_output
         #proxy_output
+    })
+}
+
+fn proxy_generics(original: &ItemTrait, args: &DriveArgs) -> syn::Generics {
+    let mut generics = original.generics.clone();
+    if let Some(Type::Path(path)) = &args.context {
+        if path.qself.is_none()
+            && path.path.leading_colon.is_none()
+            && path.path.segments.len() == 1
+            && path.path.segments[0].arguments.is_empty()
+        {
+            let context_ident = &path.path.segments[0].ident;
+            generics.params = generics
+                .params
+                .into_iter()
+                .filter(|param| match param {
+                    GenericParam::Type(type_param) => &type_param.ident != context_ident,
+                    _ => true,
+                })
+                .collect();
+        }
+    }
+    generics
+}
+
+fn expand_capability(
+    original: &ItemTrait,
+    args: &DriveArgs,
+    proxy_name: &Ident,
+) -> Result<proc_macro2::TokenStream> {
+    let orchestra = orchestra_path()?;
+    let descriptor = format_ident!("__poprako_proxy_capability_{proxy_name}");
+    let runs = args.runs.iter().map(|spec| {
+        let lifetimes = &spec.lifetimes;
+        let oper = &spec.oper;
+        quote!([#lifetimes #oper])
+    });
+    let steps = args.steps.iter().map(|spec| {
+        let lifetimes = &spec.lifetimes;
+        let oper = &spec.oper;
+        quote!([#lifetimes #oper])
+    });
+    let mut generics = proxy_generics(original, args);
+    for param in &mut generics.params {
+        match param {
+            GenericParam::Type(param) => param.default = None,
+            GenericParam::Const(param) => param.default = None,
+            GenericParam::Lifetime(_) => {}
+        }
+    }
+    let generic_params = generics.params.iter().map(|param| quote!([#param]));
+
+    Ok(quote! {
+        #[doc(hidden)]
+        #[macro_export]
+        macro_rules! #descriptor {
+            (
+                [priority $($priority:ident)*]
+                [context $($context:tt)*]
+                [providers $($providers:tt)*]
+                [pending $($pending:tt)*]
+                [collected $($collected:tt)*]
+                [current $mode:ident $provider:ident]
+            ) => {
+                #orchestra::__proxy_collect! {
+                    [priority $($priority)*]
+                    [context $($context)*]
+                    [providers $($providers)*]
+                    [pending $($pending)*]
+                    [collected
+                        $($collected)*
+                        [
+                            $mode
+                            $provider
+                            #proxy_name
+                            [generics #(#generic_params)*]
+                            [run #(#runs)*]
+                            [step #(#steps)*]
+                        ]
+                    ]
+                }
+            };
+        }
+
+        #[doc(hidden)]
+        pub use #descriptor as #proxy_name;
+
     })
 }
 
@@ -283,26 +375,7 @@ fn expand_proxy(
 
     // The proxy trait is context-free: drop the context type param when
     // `context = C` names one of the trait's generic type parameters.
-    let mut proxy_generics = original.generics.clone();
-    if let Some(context) = &args.context {
-        if let Type::Path(path) = context {
-            if path.qself.is_none()
-                && path.path.leading_colon.is_none()
-                && path.path.segments.len() == 1
-                && path.path.segments[0].arguments.is_empty()
-            {
-                let context_ident = &path.path.segments[0].ident;
-                proxy_generics.params = proxy_generics
-                    .params
-                    .into_iter()
-                    .filter(|param| match param {
-                        GenericParam::Type(type_param) => &type_param.ident != context_ident,
-                        _ => true,
-                    })
-                    .collect();
-            }
-        }
-    }
+    let proxy_generics = proxy_generics(original, args);
 
     let mut proxy_item = original.clone();
     proxy_item.ident = proxy_name.clone();

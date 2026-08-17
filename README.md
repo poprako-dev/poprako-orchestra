@@ -82,9 +82,9 @@ async fn create_user(
 With the `macro` feature, operations declare only their output:
 `#[oper(output = u64)]`.
 
-`#[drive]` generates **one** proxy capability trait that merges the
-transaction-free and transactional operation lists. The proxy carries no
-context and no level — it erases the transaction model:
+`#[drive]` generates a standard proxy capability trait plus a hidden capability
+table. The public trait merges the transaction-free and transactional operation
+lists, while the table lets `proxy!` wire providers without repeating any oper:
 
 ```rust
 #[drive(
@@ -97,26 +97,33 @@ context and no level — it erases the transaction model:
 trait UserRepo {}
 ```
 
-Complex logic depends on `P: UserRepoProxy` alone and never learns whether an
-operation is run or stepped. For a mixed repo, `proxy!` routes each operation
-through its declared execution mode while producing one value that satisfies
-the merged capability:
+Complex logic depends on standard capability traits alone and never learns
+whether an operation is run or stepped. One provider may advertise several
+capabilities with `as A + B`, and each provider reference is stored once:
 
 ```rust
 let mut proxy = poprako_orchestra::proxy! {
-    run {
-        repo => GetUser;
-    }
-    step(&mut connection) {
-        repo => CreateUser;
-    }
+    run => repo as UserRepoProxy + ComicRepoProxy;
+    step(&mut connection) =>
+        repo as UserRepoProxy + ComicRepoProxy,
+        prom as PromProxy;
 };
 
-complex(&mut proxy).await?; // requires only `P: UserRepoProxy`
+complex(&mut proxy).await?;
+// P: UserRepoProxy + ComicRepoProxy + PromProxy
 ```
 
-`run_proxy!` and `step_proxy!` remain available when the entire capability
-uses one execution mode.
+`proxy!` collects and deduplicates the full oper union before emitting one
+`Proxy<O>` implementation per oper. Its routing rules are deterministic:
+
+- `step > run` by default; add `priority => run, step;` to reverse it.
+- Within one mode, the leftmost provider declaring a capability owns that
+  capability's complete oper set.
+- If several capabilities contain the same oper, mode priority and provider
+  order select one route without adding bounds for discarded routes.
+
+The old `run_proxy!`, `step_proxy!`, and oper-listing `proxy!` forms were
+removed in 0.5.0. The new `proxy!` is available with the `macro` feature.
 
 ## Transaction levels
 

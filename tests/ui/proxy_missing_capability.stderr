@@ -1,0 +1,5 @@
+error: cannot find macro `MissingProxy` in this scope
+ --> tests/ui/proxy_missing_capability.rs:8:24
+  |
+8 |         run => repo as MissingProxy;
+  |                        ^^^^^^^^^^^^

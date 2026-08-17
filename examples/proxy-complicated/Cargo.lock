@@ -126,14 +126,14 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "poprako-orchestra"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "poprako-orchestra-macro",
 ]
 
 [[package]]
 name = "poprako-orchestra-macro"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",

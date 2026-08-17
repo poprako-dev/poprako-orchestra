@@ -1,0 +1,37 @@
+error[E0277]: the trait bound `Partial: Run<Second>` is not satisfied
+  --> tests/ui/proxy_wrong_provider.rs:50:18
+   |
+50 |     require_pair(&proxy);
+   |     ------------ ^^^^^^ unsatisfied trait bound
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the trait `Run<Second>` is not implemented for `Partial`
+      but trait `Run<First>` is implemented for it
+  --> tests/ui/proxy_wrong_provider.rs:16:1
+   |
+16 | impl Run<First> for Partial {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `First`, found `Second`
+note: required for `CapabilityProxy<'_, Partial, Complete>` to implement `Proxy<Second>`
+  --> tests/ui/proxy_wrong_provider.rs:11:1
+   |
+11 |   #[drive(error = (), proxy = PairProxy, run(First, Second))]
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+47 |       let proxy = proxy! {
+   |  _________________-
+48 | |         run => partial as PairProxy, complete as PairProxy;
+49 | |     };
+   | |_____- in this macro invocation
+note: required for `CapabilityProxy<'_, Partial, Complete>` to implement `PairProxy`
+  --> tests/ui/proxy_wrong_provider.rs:11:1
+   |
+11 | #[drive(error = (), proxy = PairProxy, run(First, Second))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `require_pair`
+  --> tests/ui/proxy_wrong_provider.rs:42:20
+   |
+42 | fn require_pair<P: PairProxy>(_proxy: &P) {}
+   |                    ^^^^^^^^^ required by this bound in `require_pair`
+   = note: this error originates in the macro `::poprako_orchestra::__proxy_collect` which comes from the expansion of the attribute macro `drive` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -49,3 +49,11 @@ pub use poprako_orchestra_macro::Oper;
 #[cfg(feature = "macro")]
 /// Creates aggregate repo traits and an optional execution-erased proxy trait.
 pub use poprako_orchestra_macro::drive;
+
+#[cfg(feature = "macro")]
+#[doc(hidden)]
+pub use poprako_orchestra_macro::__proxy_collect;
+
+#[cfg(feature = "macro")]
+/// Builds a proxy by routing standard capabilities through run or step providers.
+pub use poprako_orchestra_macro::proxy;
