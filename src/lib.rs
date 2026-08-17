@@ -47,5 +47,5 @@ pub use step::{OperRun, OperStep};
 pub use poprako_orchestra_macro::Oper;
 
 #[cfg(feature = "macro")]
-/// Creates aggregate repo traits and optional separate run/step proxy traits.
+/// Creates aggregate repo traits and an optional execution-erased proxy trait.
 pub use poprako_orchestra_macro::drive;

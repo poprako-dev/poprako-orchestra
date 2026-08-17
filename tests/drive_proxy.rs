@@ -2,9 +2,7 @@
 
 use std::marker::PhantomData;
 
-use poprako_orchestra::{
-    AtLeast, Context, Level, Oper, Proxy, Run, Step, drive, run_proxy, step_proxy,
-};
+use poprako_orchestra::{AtLeast, Context, Level, Oper, Proxy, Run, Step, drive, proxy};
 
 struct Transactional;
 
@@ -16,7 +14,7 @@ impl Context for Cx {
     type Level = Transactional;
 }
 
-// --- Concrete-context case: one proxy capability, two transaction wirings ---
+// --- Concrete-context case: one proxy capability, mixed execution wiring ---
 
 #[derive(Oper)]
 #[oper(output = ())]
@@ -31,14 +29,13 @@ struct CreateOrder<'a> {
     quantity: u32,
 }
 
-// One capability trait merges both operation lists. Complex logic depends on
-// this single name and never learns whether an operation is run or stepped.
+// The capability is the union, while each operation keeps its execution mode.
 #[drive(
     context = Cx,
     error = String,
     proxy = OrderRepoProxy,
-    run(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
-    step(for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>),
+    run(for<'a> EnsureCustomer<'a>),
+    step(for<'a> CreateOrder<'a>),
 )]
 trait OrderRepo {}
 
@@ -52,23 +49,6 @@ impl Run<EnsureCustomer<'_>> for Repo {
             return Err("customer ID must not be empty".to_owned());
         }
 
-        Ok(())
-    }
-}
-
-impl Run<CreateOrder<'_>> for Repo {
-    type Error = String;
-
-    async fn run(&self, oper: &CreateOrder<'_>) -> Result<u64, Self::Error> {
-        Ok(oper.customer_id.len() as u64 + oper.quantity as u64)
-    }
-}
-
-impl Step<EnsureCustomer<'_>, Cx> for Repo {
-    type Level = Transactional;
-    type Error = String;
-
-    async fn step(&self, _context: &mut Cx, _oper: &EnsureCustomer<'_>) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -90,35 +70,24 @@ fn require_proxy<P: OrderRepoProxy>(_proxy: &P) {}
 fn place<P: OrderRepoProxy>(_proxy: &mut P) {}
 
 #[test]
-fn one_proxy_capability_satisfied_by_both_transaction_wirings() {
+fn one_proxy_capability_supports_asymmetric_execution_wiring() {
     require_repo::<Repo>();
 
     let repo = &Repo;
-
-    // Run wiring: every operation executes non-transactionally.
-    let mut run_proxy = run_proxy! {
-        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
-    };
-    require_proxy(&run_proxy);
-    place(&mut run_proxy);
-    drop(run_proxy.exec(&EnsureCustomer { customer_id: "c" }));
-    drop(run_proxy.exec(&CreateOrder {
-        customer_id: "c",
-        quantity: 1,
-    }));
-
-    // Step wiring: the same operations execute inside one shared transaction
-    // context. The capability trait cannot tell the two wirings apart.
     let mut context = Cx;
-    let context = &mut context;
-    let mut step_proxy = step_proxy! {
-        context;
-        repo => for<'a> EnsureCustomer<'a>, for<'a> CreateOrder<'a>;
+    let mut proxy = proxy! {
+        run {
+            repo => for<'a> EnsureCustomer<'a>;
+        }
+        step(&mut context) {
+            repo => for<'a> CreateOrder<'a>;
+        }
     };
-    require_proxy(&step_proxy);
-    place(&mut step_proxy);
-    drop(step_proxy.exec(&EnsureCustomer { customer_id: "c" }));
-    drop(step_proxy.exec(&CreateOrder {
+
+    require_proxy(&proxy);
+    place(&mut proxy);
+    drop(proxy.exec(&EnsureCustomer { customer_id: "c" }));
+    drop(proxy.exec(&CreateOrder {
         customer_id: "c",
         quantity: 1,
     }));

@@ -98,8 +98,25 @@ trait UserRepo {}
 ```
 
 Complex logic depends on `P: UserRepoProxy` alone and never learns whether an
-operation is run or stepped; the `run_proxy!` / `step_proxy!` combinators pick
-the wiring at the application layer.
+operation is run or stepped. For a mixed repo, `proxy!` routes each operation
+through its declared execution mode while producing one value that satisfies
+the merged capability:
+
+```rust
+let mut proxy = poprako_orchestra::proxy! {
+    run {
+        repo => GetUser;
+    }
+    step(&mut connection) {
+        repo => CreateUser;
+    }
+};
+
+complex(&mut proxy).await?; // requires only `P: UserRepoProxy`
+```
+
+`run_proxy!` and `step_proxy!` remain available when the entire capability
+uses one execution mode.
 
 ## Transaction levels
 

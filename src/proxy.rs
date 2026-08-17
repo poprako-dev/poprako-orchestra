@@ -548,6 +548,251 @@ macro_rules! step_proxy {
     };
 }
 
+/// Builds one proxy whose operations are routed through either
+/// [`Run`](crate::Run) or [`Step`](crate::Step).
+///
+/// Unlike [`run_proxy!`](crate::run_proxy) and
+/// [`step_proxy!`](crate::step_proxy), this adapter supports an asymmetric
+/// operation set: each operation is listed under exactly one execution mode,
+/// while the resulting value implements [`Proxy`] for their union.
+///
+/// ```
+/// # use poprako_orchestra::{Context, Level, Oper, Run, Step, proxy};
+/// # struct Transactional;
+/// # impl Level for Transactional {}
+/// # struct Cx;
+/// # impl Context for Cx { type Level = Transactional; }
+/// # struct Read;
+/// # impl Oper for Read { type Output = (); }
+/// # struct Write;
+/// # impl Oper for Write { type Output = (); }
+/// # struct Repo;
+/// # impl Run<Read> for Repo {
+/// #     type Error = ();
+/// #     async fn run(&self, _oper: &Read) -> Result<(), Self::Error> { Ok(()) }
+/// # }
+/// # impl Step<Write, Cx> for Repo {
+/// #     type Level = Transactional;
+/// #     type Error = ();
+/// #     async fn step(&self, _context: &mut Cx, _oper: &Write) -> Result<(), Self::Error> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// let repo = &Repo;
+/// let mut context = Cx;
+/// let _proxy = proxy! {
+///     run {
+///         repo => Read;
+///     }
+///     step(&mut context) {
+///         repo => Write;
+///     }
+/// };
+/// ```
+#[macro_export]
+macro_rules! proxy {
+    (
+        run {
+            $($run_rows:tt)*
+        }
+        step($context:expr) {
+            $($step_rows:tt)*
+        }
+    ) => {{
+        let run = $crate::run_proxy! {
+            $($run_rows)*
+        };
+        let step = $crate::step_proxy! {
+            $context;
+            $($step_rows)*
+        };
+
+        struct MixedProxy<RunProxy, StepProxy> {
+            run: RunProxy,
+            step: StepProxy,
+        }
+
+        $crate::proxy! {
+            @impl_rows
+            MixedProxy,
+            run;
+            $($run_rows)*
+        }
+        $crate::proxy! {
+            @impl_rows
+            MixedProxy,
+            step;
+            $($step_rows)*
+        }
+
+        MixedProxy { run, step }
+    }};
+
+    (
+        @impl_rows
+        $proxy:ident,
+        $mode:ident;
+    ) => {};
+
+    (
+        @impl_rows
+        $proxy:ident,
+        $mode:ident;
+
+        $repo:ident => $(for<$($oper_lt:lifetime),+> $oper:ty),+;
+
+        $($rest:tt)*
+    ) => {
+        $(
+            $crate::proxy! {
+                @impl_lifetime
+                $proxy,
+                $mode;
+                for<$($oper_lt),+> $oper
+            }
+        )+
+
+        $crate::proxy! {
+            @impl_rows
+            $proxy,
+            $mode;
+            $($rest)*
+        }
+    };
+
+    (
+        @impl_rows
+        $proxy:ident,
+        $mode:ident;
+
+        $repo:ident => $($oper:ty),+;
+
+        $($rest:tt)*
+    ) => {
+        $(
+            $crate::proxy! {
+                @impl_plain
+                $proxy,
+                $mode;
+                $oper
+            }
+        )+
+
+        $crate::proxy! {
+            @impl_rows
+            $proxy,
+            $mode;
+            $($rest)*
+        }
+    };
+
+    (
+        @impl_lifetime
+        $proxy:ident,
+        run;
+        for<$($oper_lt:lifetime),+> $oper:ty
+    ) => {
+        impl<$($oper_lt,)+ RunProxy, StepProxy> $crate::Proxy<$oper>
+            for $proxy<RunProxy, StepProxy>
+        where
+            RunProxy: $crate::Proxy<$oper>,
+        {
+            type Error = <RunProxy as $crate::Proxy<$oper>>::Error;
+
+            fn exec(
+                &mut self,
+                oper: &$oper,
+            ) -> impl ::core::future::Future<
+                Output = ::core::result::Result<
+                    <$oper as $crate::Oper>::Output,
+                    Self::Error,
+                >,
+            > + Send {
+                <RunProxy as $crate::Proxy<$oper>>::exec(&mut self.run, oper)
+            }
+        }
+    };
+
+    (
+        @impl_lifetime
+        $proxy:ident,
+        step;
+        for<$($oper_lt:lifetime),+> $oper:ty
+    ) => {
+        impl<$($oper_lt,)+ RunProxy, StepProxy> $crate::Proxy<$oper>
+            for $proxy<RunProxy, StepProxy>
+        where
+            StepProxy: $crate::Proxy<$oper>,
+        {
+            type Error = <StepProxy as $crate::Proxy<$oper>>::Error;
+
+            fn exec(
+                &mut self,
+                oper: &$oper,
+            ) -> impl ::core::future::Future<
+                Output = ::core::result::Result<
+                    <$oper as $crate::Oper>::Output,
+                    Self::Error,
+                >,
+            > + Send {
+                <StepProxy as $crate::Proxy<$oper>>::exec(&mut self.step, oper)
+            }
+        }
+    };
+
+    (
+        @impl_plain
+        $proxy:ident,
+        run;
+        $oper:ty
+    ) => {
+        impl<RunProxy, StepProxy> $crate::Proxy<$oper> for $proxy<RunProxy, StepProxy>
+        where
+            RunProxy: $crate::Proxy<$oper>,
+        {
+            type Error = <RunProxy as $crate::Proxy<$oper>>::Error;
+
+            fn exec(
+                &mut self,
+                oper: &$oper,
+            ) -> impl ::core::future::Future<
+                Output = ::core::result::Result<
+                    <$oper as $crate::Oper>::Output,
+                    Self::Error,
+                >,
+            > + Send {
+                <RunProxy as $crate::Proxy<$oper>>::exec(&mut self.run, oper)
+            }
+        }
+    };
+
+    (
+        @impl_plain
+        $proxy:ident,
+        step;
+        $oper:ty
+    ) => {
+        impl<RunProxy, StepProxy> $crate::Proxy<$oper> for $proxy<RunProxy, StepProxy>
+        where
+            StepProxy: $crate::Proxy<$oper>,
+        {
+            type Error = <StepProxy as $crate::Proxy<$oper>>::Error;
+
+            fn exec(
+                &mut self,
+                oper: &$oper,
+            ) -> impl ::core::future::Future<
+                Output = ::core::result::Result<
+                    <$oper as $crate::Oper>::Output,
+                    Self::Error,
+                >,
+            > + Send {
+                <StepProxy as $crate::Proxy<$oper>>::exec(&mut self.step, oper)
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
