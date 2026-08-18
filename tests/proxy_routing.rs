@@ -1,239 +1,132 @@
 #![cfg(feature = "macro")]
-#![allow(dead_code, refining_impl_trait)]
+#![allow(refining_impl_trait)]
 
 use std::future::{Ready, ready};
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use poprako_orchestra::{Context, Level, Oper, Proxy, Run, Step, drive, proxy};
+use poprako_orchestra::{Context, Level, Oper, Proxy, Run, Step, proxy};
 
-struct Transactional;
-
-impl Level for Transactional {}
+struct Serializable;
+impl Level for Serializable {}
 
 struct Cx;
-
 impl Context for Cx {
-    type Level = Transactional;
+    type Level = Serializable;
 }
 
 #[derive(Oper)]
-#[oper(output = ())]
-struct Read;
+#[oper(output = usize)]
+struct Read<'a> {
+    value: &'a str,
+}
 
 #[derive(Oper)]
-#[oper(output = ())]
-struct Write;
+#[oper(output = usize)]
+struct Write<const N: usize>;
 
 #[derive(Oper)]
-#[oper(output = ())]
-struct Shared;
+#[oper(output = usize)]
+struct FindUser<T, const N: usize> {
+    marker: PhantomData<T>,
+}
 
-#[drive(
-    context = Cx,
-    error = (),
-    proxy = HybridProxy,
-    run(Read, Shared),
-    step(Write, Shared),
-)]
-trait Hybrid {}
-
-struct RunRead<'a>(&'a AtomicUsize);
-
-impl Run<Read> for RunRead<'_> {
+struct RunRepo<'a>(&'a AtomicUsize);
+impl Run<Read<'_>> for RunRepo<'_> {
     type Error = ();
 
-    fn run(&self, _oper: &Read) -> Ready<Result<(), Self::Error>> {
+    fn run(&self, oper: &Read<'_>) -> Ready<Result<usize, Self::Error>> {
         self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
+        ready(Ok(oper.value.len()))
     }
 }
 
-struct StepWriteShared<'a>(&'a AtomicUsize);
-
-impl Step<Write, Cx> for StepWriteShared<'_> {
-    type Level = Transactional;
+struct StepRepo<'a>(&'a AtomicUsize);
+impl Step<Write<3>, Cx> for StepRepo<'_> {
+    type Level = Serializable;
     type Error = ();
 
-    fn step(&self, _context: &mut Cx, _oper: &Write) -> Ready<Result<(), Self::Error>> {
+    fn step(&self, _context: &mut Cx, _oper: &Write<3>) -> Ready<Result<usize, Self::Error>> {
         self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
+        ready(Ok(3))
     }
 }
 
-impl Step<Shared, Cx> for StepWriteShared<'_> {
-    type Level = Transactional;
+struct GenericRepo;
+impl<T: Send + Sync, const N: usize> Run<FindUser<T, N>> for GenericRepo {
     type Error = ();
 
-    fn step(&self, _context: &mut Cx, _oper: &Shared) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
+    async fn run(&self, _oper: &FindUser<T, N>) -> Result<usize, Self::Error> {
+        Ok(N)
     }
 }
 
 #[test]
-fn default_priority_selects_step_without_requiring_unselected_run() {
+fn run_adapter_uses_only_run_provider_and_borrows_provider_once() {
+    let calls = AtomicUsize::new(0);
+    let repo = &RunRepo(&calls);
+    let mut proxy = proxy! {
+        run {
+            repo => for<'a> Read<'a>;
+        }
+    };
+    let result = futures::executor::block_on(proxy.exec(&Read { value: "abc" }));
+    assert_eq!(result, Ok(3));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn step_adapter_uses_one_context_and_supports_const_binders() {
+    let calls = AtomicUsize::new(0);
+    let repo = &StepRepo(&calls);
+    let context = &mut Cx;
+    let mut proxy = proxy! {
+        step(context) {
+            repo => for<const N: usize> Write<N>;
+        }
+    };
+    let result = futures::executor::block_on(proxy.exec(&Write::<3>));
+    assert_eq!(result, Ok(3));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn run_and_step_are_independent_assemblies() {
     let run_calls = AtomicUsize::new(0);
     let step_calls = AtomicUsize::new(0);
-    let run_repo = &RunRead(&run_calls);
-    let step_repo = &StepWriteShared(&step_calls);
-    let mut context = Cx;
-    let mut proxy = proxy! {
-        run => run_repo as HybridProxy;
-        step(&mut context) => step_repo as HybridProxy;
+    let run_repo = &RunRepo(&run_calls);
+    let step_repo = &StepRepo(&step_calls);
+    let mut run_adapter = proxy! {
+        run {
+            run_repo => for<'a> Read<'a>;
+        }
     };
-
-    drop(proxy.exec(&Read));
-    drop(proxy.exec(&Write));
-    drop(proxy.exec(&Shared));
-
-    assert_eq!(run_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(step_calls.load(Ordering::Relaxed), 2);
-}
-
-struct RunReadShared<'a>(&'a AtomicUsize);
-
-impl Run<Read> for RunReadShared<'_> {
-    type Error = ();
-
-    fn run(&self, _oper: &Read) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-impl Run<Shared> for RunReadShared<'_> {
-    type Error = ();
-
-    fn run(&self, _oper: &Shared) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-struct StepWrite<'a>(&'a AtomicUsize);
-
-impl Step<Write, Cx> for StepWrite<'_> {
-    type Level = Transactional;
-    type Error = ();
-
-    fn step(&self, _context: &mut Cx, _oper: &Write) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
+    let context = &mut Cx;
+    let mut step_adapter = proxy! {
+        step(context) {
+            step_repo => for<const N: usize> Write<N>;
+        }
+    };
+    assert_eq!(
+        futures::executor::block_on(run_adapter.exec(&Read { value: "x" })),
+        Ok(1)
+    );
+    assert_eq!(
+        futures::executor::block_on(step_adapter.exec(&Write::<3>)),
+        Ok(3)
+    );
 }
 
 #[test]
-fn explicit_priority_selects_run_without_requiring_unselected_step() {
-    let run_calls = AtomicUsize::new(0);
-    let step_calls = AtomicUsize::new(0);
-    let run_repo = &RunReadShared(&run_calls);
-    let step_repo = &StepWrite(&step_calls);
-    let mut context = Cx;
+fn proxy_supports_type_and_const_binders_together() {
+    let repo = &GenericRepo;
     let mut proxy = proxy! {
-        priority => run, step;
-        run => run_repo as HybridProxy;
-        step(&mut context) => step_repo as HybridProxy;
+        run {
+            repo => for<T: Send, const N: usize> FindUser<T, N>;
+        }
     };
-
-    drop(proxy.exec(&Read));
-    drop(proxy.exec(&Write));
-    drop(proxy.exec(&Shared));
-
-    assert_eq!(run_calls.load(Ordering::Relaxed), 2);
-    assert_eq!(step_calls.load(Ordering::Relaxed), 1);
-}
-
-#[drive(error = (), proxy = ReadProxy, run(Read, Shared))]
-trait ReadDrive {}
-
-#[drive(
-    context = Cx,
-    error = (),
-    proxy = WriteProxy,
-    step(Write, Shared),
-)]
-trait WriteDrive {}
-
-struct MultiRepo<'a>(&'a AtomicUsize);
-
-impl Run<Read> for MultiRepo<'_> {
-    type Error = ();
-
-    fn run(&self, _oper: &Read) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-impl Run<Shared> for MultiRepo<'_> {
-    type Error = ();
-
-    fn run(&self, _oper: &Shared) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-impl Step<Write, Cx> for MultiRepo<'_> {
-    type Level = Transactional;
-    type Error = ();
-
-    fn step(&self, _context: &mut Cx, _oper: &Write) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-impl Step<Shared, Cx> for MultiRepo<'_> {
-    type Level = Transactional;
-    type Error = ();
-
-    fn step(&self, _context: &mut Cx, _oper: &Shared) -> Ready<Result<(), Self::Error>> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        ready(Ok(()))
-    }
-}
-
-fn require_standard_capabilities<P>(_proxy: &P)
-where
-    P: ReadProxy + WriteProxy,
-{
-}
-
-#[test]
-fn one_provider_supplies_multiple_capabilities_and_duplicate_opers_are_deduped() {
-    let calls = AtomicUsize::new(0);
-    let repo = &MultiRepo(&calls);
-    let mut context = Cx;
-    let mut proxy = proxy! {
-        run => repo as ReadProxy + WriteProxy;
-        step(&mut context) => repo as ReadProxy + WriteProxy;
+    let oper = FindUser::<String, 7> {
+        marker: PhantomData,
     };
-
-    require_standard_capabilities(&proxy);
-    drop(proxy.exec(&Read));
-    drop(proxy.exec(&Write));
-    drop(proxy.exec(&Shared));
-    assert_eq!(calls.load(Ordering::Relaxed), 3);
+    assert_eq!(futures::executor::block_on(proxy.exec(&oper)), Ok(7));
 }
-
-#[test]
-fn run_only_and_step_only_capability_proxies_compile() {
-    let calls = AtomicUsize::new(0);
-    let run_repo = &RunReadShared(&calls);
-    let run_proxy = proxy! {
-        run => run_repo as ReadProxy;
-    };
-    require_read_proxy(&run_proxy);
-
-    let step_repo = &StepWriteShared(&calls);
-    let mut context = Cx;
-    let step_proxy = proxy! {
-        step(&mut context) => step_repo as WriteProxy;
-    };
-    require_write_proxy(&step_proxy);
-}
-
-fn require_read_proxy<P: ReadProxy>(_proxy: &P) {}
-
-fn require_write_proxy<P: WriteProxy>(_proxy: &P) {}

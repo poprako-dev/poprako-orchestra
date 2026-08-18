@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-use poprako_orchestra::nucl::{Nucl, NuclError};
-use poprako_orchestra::{AtLeast, Context, Level, Oper, Proxy, Run, Step};
+use poprako_orchestra::{AtLeast, Context, Level, Oper, Run, Step};
 
 struct RepeatableRead;
 impl Level for RepeatableRead {}
@@ -29,7 +28,7 @@ struct Repo;
 impl Run<Read> for Repo {
     type Error = ();
 
-    async fn run(&self, _oper: &Read) -> Result<(), ()> {
+    async fn run(&self, _oper: &Read) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -38,7 +37,7 @@ impl Step<Read, Cx> for Repo {
     type Level = RepeatableRead;
     type Error = ();
 
-    async fn step(&self, _context: &mut Cx, _oper: &Read) -> Result<(), ()> {
+    async fn step(&self, _context: &mut Cx, _oper: &Read) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -47,66 +46,25 @@ impl Step<Write, Cx> for Repo {
     type Level = Serializable;
     type Error = ();
 
-    async fn step(&self, _context: &mut Cx, _oper: &Write) -> Result<(), ()> {
+    async fn step(&self, _context: &mut Cx, _oper: &Write) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
-#[cfg(feature = "macro")]
-#[poprako_orchestra::drive(
-    context = Cx,
-    error = (),
-    proxy = MixedLevelProxy,
-    run(Read),
-    step(Read, Write),
-)]
-trait MixedLevelDriver {}
-
-#[cfg(feature = "macro")]
-fn assert_mixed_level_driver<D: MixedLevelDriver>() {}
-
-struct Backend;
-impl Nucl for Backend {
-    type Level = Serializable;
-    type Error = ();
-    type Context = Cx;
-
-    async fn coord<F, T, E>(&self, _f: F) -> Result<T, NuclError<(), E>>
-    where
-        F: for<'cx> AsyncFnOnce(&'cx mut Cx) -> Result<T, E> + Send,
-        T: Send,
-        E: Send,
-    {
-        panic!()
-    }
-}
-
-fn assert_proxy<P>(_proxy: &P)
-where
-    P: Proxy<Read, Error = ()>,
-{
-}
-
 #[test]
 fn run_has_no_level_and_steps_can_require_different_levels() {
-    fn assert_nucl<N: Nucl<Level = Serializable, Context = Cx>>() {}
-    assert_nucl::<Backend>();
-
-    #[cfg(feature = "macro")]
-    assert_mixed_level_driver::<Repo>();
-
-    #[cfg(feature = "macro")]
+    fn assert_run<R: Run<Read, Error = ()>>() {}
+    fn assert_step<R: Step<Read, Cx, Error = ()>>()
+    where
+        R: LevelGuardForRead,
     {
-        let repo = &Repo;
-        let run_proxy = poprako_orchestra::proxy! {
-            run => repo as MixedLevelProxy;
-        };
-        assert_proxy(&run_proxy);
-
-        let mut context = Cx;
-        let step_proxy = poprako_orchestra::proxy! {
-            step(&mut context) => repo as MixedLevelProxy;
-        };
-        assert_proxy(&step_proxy);
     }
+    assert_run::<Repo>();
+    assert_step::<Repo>();
+}
+
+trait LevelGuardForRead {}
+impl<T> LevelGuardForRead for T where
+    T: Step<Read, Cx> + poprako_orchestra::LevelGuard<Serializable, T::Level>
+{
 }

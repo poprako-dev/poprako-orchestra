@@ -1,5 +1,0 @@
-error: priority must contain `run` and `step` exactly once
-  --> tests/ui/proxy_invalid_priority.rs:23:26
-   |
-23 |         priority => run, run;
-   |                          ^^^

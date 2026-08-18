@@ -17,30 +17,11 @@ use std::future::Future;
 use crate::level::{Context, Level, LevelGuard};
 use crate::oper::Oper;
 
-#[derive(Clone, Copy)]
-struct AutoCommit;
-
-impl Level for AutoCommit {}
-
-impl Context for AutoCommit {
-    type Level = AutoCommit;
-}
-
-fn auto_commit() -> &'static AutoCommit {
-    static AUTO_COMMIT: AutoCommit = AutoCommit;
-
-    &AUTO_COMMIT
-}
-
 /// An async executor that processes an [`Oper`] against a given context.
 ///
 /// * `O` — the [`Oper`] type this step can execute.
 /// * `C` — the [`Context`] type this step requires.
-pub trait Step<O, C>
-where
-    O: Oper,
-    C: Context,
-{
+pub trait Step<O: Oper, C: Context> {
     /// The minimum transaction level required by this execution strategy.
     ///
     /// The level is local to **one** `Step` implementation: the same stepper
@@ -99,33 +80,12 @@ where
 ///
 /// Use `#[drive(...)]` (with this crate's `macro` feature enabled) to define
 /// an empty aggregate trait over one or more [`Run`] and [`Step`] bounds.
-pub trait Run<O>
-where
-    O: Oper,
-{
+pub trait Run<O: Oper> {
     /// Error type that may occur during execution.
     type Error;
 
     /// Execute the operation and return its output.
     fn run(&self, oper: &O) -> impl Future<Output = Result<O::Output, Self::Error>> + Send;
-}
-
-impl<O, R> Step<O, AutoCommit> for R
-where
-    O: Oper,
-    R: Run<O>,
-{
-    type Level = AutoCommit;
-    type Error = R::Error;
-
-    fn step(
-        &self,
-        _context: &mut AutoCommit,
-        oper: &O,
-    ) -> impl Future<Output = Result<O::Output, Self::Error>> + Send {
-        let _ = auto_commit();
-        self.run(oper)
-    }
 }
 
 /// An [`Oper`] extension trait that invokes a [`Run`] from the operation.

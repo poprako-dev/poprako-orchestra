@@ -51,9 +51,6 @@ pub use poprako_orchestra_macro::Oper;
 pub use poprako_orchestra_macro::drive;
 
 #[cfg(feature = "macro")]
-#[doc(hidden)]
-pub use poprako_orchestra_macro::__proxy_collect;
-
 #[cfg(feature = "macro")]
-/// Builds a proxy by routing standard capabilities through run or step providers.
+/// Builds a proxy from explicitly listed operations and providers.
 pub use poprako_orchestra_macro::proxy;

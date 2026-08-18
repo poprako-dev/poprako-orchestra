@@ -14,12 +14,6 @@ pub fn drive(attr: TokenStream, item: TokenStream) -> TokenStream {
     drive::drive(attr, item)
 }
 
-#[doc(hidden)]
-#[proc_macro]
-pub fn __proxy_collect(input: TokenStream) -> TokenStream {
-    proxy::collect(input)
-}
-
 #[proc_macro]
 pub fn proxy(input: TokenStream) -> TokenStream {
     proxy::proxy(input)
